@@ -9,6 +9,7 @@ import { URL } from "node:url";
 
 const PORT = parseInt(process.env.CDP_PROXY_PORT || "3456", 10);
 const PROXY_BASE_URL = `http://127.0.0.1:${PORT}`;
+const WS_URL_FILE = "/tmp/cdp-browser-ws-url";
 let ws = null;
 let cmdId = 0;
 const pending = new Map();
@@ -23,6 +24,27 @@ if (typeof globalThis.WebSocket !== "undefined") {
   } catch {
     console.error("[CDP Proxy] Node.js 22+ or ws is required");
     process.exit(1);
+  }
+}
+
+async function fetchWebSocketUrl(port) {
+  try {
+    const resp = await new Promise((resolve, reject) => {
+      const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => resolve(body));
+      });
+      req.on("error", reject);
+      req.setTimeout(3000, () => {
+        req.destroy();
+        reject(new Error("timeout"));
+      });
+    });
+    const parsed = JSON.parse(resp);
+    return parsed.webSocketDebuggerUrl || null;
+  } catch {
+    return null;
   }
 }
 
@@ -74,8 +96,13 @@ async function discoverChromePort() {
     } catch {}
   }
 
-  for (const port of [9222, 9229, 9333]) {
+  for (const port of [9222, 9223, 9229, 9333]) {
     if (await checkPort(port)) {
+      // Try to get WebSocket URL from CDP protocol endpoint
+      const wsUrl = await fetchWebSocketUrl(port);
+      if (wsUrl) {
+        return { port, wsPath: new URL(wsUrl).pathname };
+      }
       return { port, wsPath: null };
     }
   }
@@ -111,30 +138,14 @@ let chromePort = null;
 let chromeWsPath = null;
 let connectingPromise = null;
 
-async function connect() {
-  if (ws && (ws.readyState === WS.OPEN || ws.readyState === 1)) return;
-  if (connectingPromise) return connectingPromise;
-
-  if (!chromePort) {
-    const discovered = await discoverChromePort();
-    if (!discovered) {
-      throw new Error(
-        "Chrome remote debugging is not available. Enable it in your normal Chrome session first.",
-      );
-    }
-    chromePort = discovered.port;
-    chromeWsPath = discovered.wsPath;
-  }
-
-  const wsUrl = getWebSocketUrl(chromePort, chromeWsPath);
-
+async function connectWithUrl(wsUrl) {
   return (connectingPromise = new Promise((resolve, reject) => {
     ws = new WS(wsUrl);
 
     const onOpen = () => {
       cleanup();
       connectingPromise = null;
-      console.log(`[CDP Proxy] connected on port ${chromePort}`);
+      console.log(`[CDP Proxy] connected to ${wsUrl}`);
       resolve();
     };
     const onError = (event) => {
@@ -185,6 +196,43 @@ async function connect() {
       ws.addEventListener("message", onMessage);
     }
   }));
+}
+
+async function connect() {
+  if (ws && (ws.readyState === WS.OPEN || ws.readyState === 1)) return;
+  if (connectingPromise) return connectingPromise;
+
+  if (!chromePort) {
+    // First, try to read pre-configured WebSocket URL from file
+    try {
+      if (fs.existsSync(WS_URL_FILE)) {
+        const content = fs.readFileSync(WS_URL_FILE, "utf-8").trim();
+        const match = content.match(/^ws_url:\s*(.+)$/);
+        if (match) {
+          const configuredUrl = match[1];
+          const urlMatch = configuredUrl.match(/ws:\/\/127\.0\.0\.1:(\d+)(.+)/);
+          if (urlMatch) {
+            chromePort = parseInt(urlMatch[1], 10);
+            chromeWsPath = configuredUrl;
+            return connectWithUrl(configuredUrl);
+          }
+        }
+      }
+    } catch {}
+
+    // Fall back to port discovery
+    const discovered = await discoverChromePort();
+    if (!discovered) {
+      throw new Error(
+        "Chrome remote debugging is not available. Enable it in your normal Chrome session first.",
+      );
+    }
+    chromePort = discovered.port;
+    chromeWsPath = discovered.wsPath;
+  }
+
+  const wsUrl = getWebSocketUrl(chromePort, chromeWsPath);
+  return connectWithUrl(wsUrl);
 }
 
 function sendCDP(method, params = {}, sessionId = null) {

@@ -83,20 +83,19 @@ function activePortFiles() {
   echo ""
   echo "web-access 需要一个开启 remote debugging 的浏览器。"
   echo ""
-  echo "推荐：单独装一个不常用的 Chromium 浏览器，用独立 profile 启动，"
-  echo "这样不需要反复弹授权提示。"
+  echo "先选择你要使用的浏览器，再在另一个终端启动它（保持那个终端不关闭）："
   echo ""
-  echo "请在新终端运行以下命令（根据你的浏览器调整路径）："
-  echo "  /Applications/Brave\\ Browser.app/Contents/MacOS/Brave\\ Browser \\"
-  echo "    --remote-debugging-port=9222 \\"
-  echo "    --user-data-dir=/tmp/brave-web-access"
+  echo "  1. Brave"
+  echo "  2. Chrome"
+  echo "  3. Edge"
+  echo "  4. Chrome Canary"
+  echo "  5. Chromium"
+  echo "  6. 其他（手动输入路径）"
   echo ""
-  echo "备选：用你日常的 Chrome/Edge 也行，但会频繁弹授权提示。"
-  echo "启用方式：Chrome -> chrome://inspect/#remote-debugging -> 开启调试"
-  echo ""
+  echo "选择后，按 web-access skill 里的对应命令启动浏览器，再回到本终端重新运行此脚本。"
   exit 1
 fi
-echo "chrome: ok (port $CHROME_PORT)"
+echo "browser: ok (port $CHROME_PORT)"
 
 HEALTH=$(curl -s --connect-timeout 3 "http://127.0.0.1:3456/health" 2>/dev/null || true)
 case "$HEALTH" in

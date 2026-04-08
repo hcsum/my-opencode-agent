@@ -22,72 +22,62 @@ bash .opencode/skills/web-access/scripts/check-deps.sh
 
 ### 浏览器配置
 
-web-access 不会自动抢占用户的日常浏览器。首次使用或检测不到浏览器时，需要用户选择并启动一个浏览器实例。
+web-access 不会自动抢占用户的日常浏览器。首次使用或检测不到浏览器时，需要用户先选择一个浏览器实例，然后由 agent 直接执行启动命令。
 
 #### 交互选择流程
 
-当 check-deps.sh 报告 "browser: not connected" 时，主动询问用户：
+当 check-deps.sh 报告 `browser: not connected` 时，必须先询问用户要用哪一个浏览器，等用户明确选择后，再由 agent 直接执行对应启动命令。给用户选择：
 
-```
-检测不到浏览器。请选择：
-1. Brave（推荐，独立 profile，无授权弹窗）
-2. Chrome
-3. Edge
-4. Chrome Canary
-5. Chromium
-6. 其他（手动输入路径）
-```
+支持的浏览器：任意 Chromium 内核浏览器（Brave、Chrome、Chrome Canary、Edge、Chromium）
 
-根据用户选择，生成对应命令并显示：
+展示给用户这个提示：
+
+检测不到浏览器。请选择一个 Chromium 浏览器，可以选择主力浏览器，好处是延用登录状态，但每次开启cdp交互可能需要弹窗确认debug授权。也可以选择自己不常用的浏览器，好处是可以开一个独立profile，这样不会触发debug授权。
+
+根据用户选择，agent 执行对应命令：
 
 **选择 1（Brave）**：
 ```bash
-/Applications/Brave\ Browser.app/Contents/MacOS/Brave\ Browser \
+open -na "Brave Browser" --args \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/brave-web-access
 ```
 
 **选择 2（Chrome）**：
 ```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+open -na "Google Chrome" --args \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/chrome-web-access
 ```
 
 **选择 3（Edge）**：
 ```bash
-/Applications/Microsoft\ Edge.app/Contents/MacOS/Microsoft\ Edge \
+open -na "Microsoft Edge" --args \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/edge-web-access
 ```
 
 **选择 4（Chrome Canary）**：
 ```bash
-/Applications/Google\ Chrome\ Canary.app/Contents/MacOS/Google\ Chrome\ Canary \
+open -na "Google Chrome Canary" --args \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/chrome-canary-web-access
 ```
 
 **选择 5（Chromium）**：
 ```bash
-/Applications/Chromium.app/Contents/MacOS/Chromium \
+open -na "Chromium" --args \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/chromium-web-access
 ```
 
-**选择 6（其他）**：让用户输入浏览器可执行文件路径，生成命令：
+> Linux 和 Windows 没有 `open -na`，应改为直接执行浏览器可执行文件并追加同样的 `--remote-debugging-port` 与 `--user-data-dir` 参数。
+
+agent 启动浏览器后，先等待 3 秒，再重新运行 `check-deps.sh` 验证，避免浏览器尚未完成启动时过早检查。
+
 ```bash
-{用户输入的路径} \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/custom-web-access
+sleep 3 && bash .opencode/skills/web-access/scripts/check-deps.sh
 ```
-
-> Linux 路径通常是 `/usr/bin/brave-browser`、`/usr/bin/chromium-browser` 等。
-> Windows 路径类似 `C:\Program Files\BraveSoftware\Brave Browser\Application\brave.exe`。
-
-用户在新终端运行生成的命令后，重新运行 `check-deps.sh` 验证。
-
-支持的浏览器：任意 Chromium 内核浏览器（Brave、Chrome、Chrome Canary、Edge、Chromium）
 
 ## 浏览哲学
 
