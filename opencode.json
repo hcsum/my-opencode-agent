@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "share": "disabled",
+  "snapshot": false,
+  "instructions": ["AGENTS.md"],
+  "mcp": {
+    "seo": {
+      "type": "local",
+      "command": ["bash", "./scripts/run-seo-mcp.sh"],
+      "timeout": 60000
+    }
+  }
+}

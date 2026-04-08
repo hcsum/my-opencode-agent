@@ -1,0 +1,200 @@
+import { createOpencodeClient } from "@opencode-ai/sdk";
+
+import type { AppConfig, PersistedState } from "./types.js";
+import { StateStore } from "./state.js";
+
+interface PromptPart {
+  type?: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
+interface SessionRecord {
+  id: string;
+}
+
+interface ApiResult<T> {
+  data?: T;
+  error?: unknown;
+}
+
+interface PromptResponse {
+  parts?: PromptPart[];
+  info?: {
+    error?: unknown;
+  };
+}
+
+export class OpencodeSession {
+  private readonly client;
+  private readonly stateStore: StateStore;
+  private sessionIdPromise?: Promise<string>;
+
+  constructor(private readonly config: AppConfig) {
+    this.client = createOpencodeClient({
+      baseUrl: config.opencodeBaseUrl,
+      fetch: this.buildFetch(),
+    });
+    this.stateStore = new StateStore(config.stateFile);
+  }
+
+  async healthcheck(): Promise<void> {
+    const sessions = await this.unwrap<Array<SessionRecord>>(
+      this.client.session.list(),
+    );
+    console.log(`[opencode] connected; visibleSessions=${sessions.length}`);
+  }
+
+  async sendTelegramTurn(input: {
+    text: string;
+    senderName: string;
+    chatTitle?: string;
+    timestamp: Date;
+  }): Promise<string> {
+    const sessionId = await this.getOrCreateSessionId();
+    const body = buildPromptBody(input);
+
+    const response = await this.unwrap<PromptResponse>(
+      this.client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts: [{ type: "text", text: body }],
+        },
+      }),
+    );
+
+    if (response.info?.error) {
+      throw new Error(extractErrorMessage(response.info.error));
+    }
+
+    return extractText(response.parts) || "No response text returned.";
+  }
+
+  private async getOrCreateSessionId(): Promise<string> {
+    if (!this.sessionIdPromise) {
+      this.sessionIdPromise = this.loadOrCreateSessionId();
+    }
+    return this.sessionIdPromise;
+  }
+
+  private async loadOrCreateSessionId(): Promise<string> {
+    const state = await this.stateStore.load();
+    if (state.sessionId) {
+      console.log(`[opencode] reusing session ${state.sessionId}`);
+      return state.sessionId;
+    }
+
+    const session = await this.unwrap<SessionRecord>(
+      this.client.session.create({
+        body: { title: this.config.telegramSessionTitle },
+      }),
+    );
+
+    await this.persistSessionId(state, session.id);
+    console.log(`[opencode] created session ${session.id}`);
+    return session.id;
+  }
+
+  private async persistSessionId(
+    state: PersistedState,
+    sessionId: string,
+  ): Promise<void> {
+    await this.stateStore.save({
+      ...state,
+      sessionId,
+    });
+  }
+
+  private async unwrap<T>(promise: Promise<ApiResult<T>>): Promise<T> {
+    const result = await promise;
+    if (result.error) {
+      throw new Error(extractErrorMessage(result.error));
+    }
+    if (result.data === undefined) {
+      throw new Error("OpenCode request returned no data");
+    }
+    return result.data;
+  }
+
+  private buildFetch(): (request: Request) => ReturnType<typeof fetch> {
+    const authHeader = buildBasicAuthHeader(
+      this.config.opencodeServerUsername,
+      this.config.opencodeServerPassword,
+    );
+
+    return async (request) => {
+      const headers = new Headers(request.headers);
+      if (authHeader) {
+        headers.set("authorization", authHeader);
+      }
+
+      return fetch(
+        new Request(request, {
+          headers,
+        }),
+      );
+    };
+  }
+}
+
+function buildPromptBody(input: {
+  text: string;
+  senderName: string;
+  chatTitle?: string;
+  timestamp: Date;
+}): string {
+  const lines = [
+    "Telegram message",
+    `Sender: ${input.senderName}`,
+    `Chat: ${input.chatTitle || "Direct chat"}`,
+    `Timestamp: ${input.timestamp.toISOString()}`,
+    "",
+    input.text.trim(),
+  ];
+
+  return lines.join("\n");
+}
+
+function extractText(parts: PromptPart[] | undefined): string {
+  if (!parts || parts.length === 0) return "";
+
+  const text = parts
+    .map((part) => {
+      if (part.type === "text" && typeof part.text === "string") {
+        return part.text;
+      }
+      if (typeof part.text === "string") {
+        return part.text;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+
+  return text;
+}
+
+function buildBasicAuthHeader(
+  username?: string,
+  password?: string,
+): string | undefined {
+  if (!password) return undefined;
+  const resolvedUser = username || "opencode";
+  const encoded = Buffer.from(`${resolvedUser}:${password}`).toString("base64");
+  return `Basic ${encoded}`;
+}
+
+function extractErrorMessage(error: unknown): string {
+  if (!error) return "OpenCode request failed";
+  if (typeof error === "string") return error;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return "OpenCode request failed";
+}
