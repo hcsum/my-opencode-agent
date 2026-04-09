@@ -1,14 +1,15 @@
 # opencode-agent
 
-Small Telegram bridge for an already-running OpenCode server.
+OpenCode workspace with local skills, local notes, and an optional Telegram bridge.
 
 ## What it does
 
-- connects to one shared OpenCode server via `@opencode-ai/sdk`
-- accepts messages from one allowed Telegram chat
-- sends them into one persistent Telegram-specific OpenCode session
-- queues requests so prompts never overlap
-- replies only when a turn completes
+- works directly in OpenCode as the primary interface
+- keeps project-local skills, notes, and MCP wiring in one repo
+- can optionally add a Telegram bridge on top of the same project setup
+- keeps Telegram in one persistent Telegram-specific OpenCode session
+- queues Telegram requests so prompts never overlap
+- replies to Telegram only when a turn completes
 
 ## Included project skills
 
@@ -21,21 +22,54 @@ Small Telegram bridge for an already-running OpenCode server.
 - `.opencode/skills/refine-web-cafe-notes` for consolidating `notes/webcafe.md`
 - `.opencode/skills/keyword-research` for writing durable keyword memos to `notes/keyword-research.md`
 
-## What it does not do
-
-- no scheduler
-- no multi-channel routing
-- no container runtime
-- no database
-- no shared session with the TUI
-
 ## Requirements
 
 - Node.js 22+
-- a running OpenCode server, for example `opencode serve --port 4096`
-- a Telegram bot token
 - `uv` / `uvx` available on PATH for the local `seo-mcp` server
 - local sibling repo at `../seo-mcp`
+
+## Modes
+
+### 1. OpenCode only
+
+If you only want to use the project in OpenCode, no Telegram and no shared server are required.
+
+```bash
+npm install
+opencode
+```
+
+This mode uses:
+
+- `opencode.json`
+- `AGENTS.md`
+- `.opencode/skills/*`
+- `notes/*`
+- local `seo` MCP
+
+You do not need `.env` for this mode unless a skill or MCP dependency needs secrets like `CAPSOLVER_API_KEY`.
+
+### 2. Telegram bridge with shared server
+
+Use this when you want Telegram and OpenCode to talk to the same OpenCode server, but in separate sessions.
+
+Requirements:
+
+- a running OpenCode server, for example `opencode serve --port 4096`
+- a Telegram bot token
+- a filled `.env`
+
+Start order:
+
+```bash
+opencode serve --port 4096
+opencode attach http://127.0.0.1:4096
+npm run dev
+```
+
+### 3. Telegram bridge without the TUI
+
+If you only want the Telegram bridge and do not care about attaching the TUI to the same server, you can still run the server and the bridge without `opencode attach`.
 
 ## Setup
 
@@ -45,11 +79,11 @@ Small Telegram bridge for an already-running OpenCode server.
 npm install
 ```
 
-2. Copy `.env.example` to `.env` and fill in values.
+2. If you plan to use Telegram, copy `.env.example` to `.env` and fill in values.
 
-3. Start OpenCode server.
+3. If you plan to use Telegram, start an OpenCode server.
 
-4. Start the bot:
+4. If you plan to use Telegram, start the bot:
 
 ```bash
 npm run dev
@@ -57,13 +91,13 @@ npm run dev
 
 ## Environment
 
-- `TELEGRAM_BOT_TOKEN`: Telegram bot token
-- `TELEGRAM_ALLOWED_CHAT_ID`: only this chat is serviced
-- `OPENCODE_BASE_URL`: base URL for the shared OpenCode server
-- `OPENCODE_SERVER_USERNAME`: optional basic auth username
-- `OPENCODE_SERVER_PASSWORD`: optional basic auth password
-- `CAPSOLVER_API_KEY`: passed to the local `seo-mcp` MCP server through `scripts/run-seo-mcp.sh`
-- `TELEGRAM_SESSION_TITLE`: optional title for the OpenCode session
+- `TELEGRAM_BOT_TOKEN`: Telegram bot token, only needed for the Telegram bridge
+- `TELEGRAM_ALLOWED_CHAT_ID`: only this chat is serviced, only needed for the Telegram bridge
+- `OPENCODE_BASE_URL`: base URL for the shared OpenCode server, only needed for the Telegram bridge
+- `OPENCODE_SERVER_USERNAME`: optional basic auth username for the OpenCode server
+- `OPENCODE_SERVER_PASSWORD`: optional basic auth password for the OpenCode server
+- `CAPSOLVER_API_KEY`: used by the local `seo` MCP server when `seo-mcp` needs it
+- `TELEGRAM_SESSION_TITLE`: optional title for the Telegram OpenCode session
 - `STATE_FILE`: optional JSON state file path for the Telegram bridge's local runtime state, mainly the persisted OpenCode session ID used to resume the same Telegram conversation after restarts
 
 ## MCP
