@@ -15,6 +15,8 @@ Default notes path: `notes/webcafe.md`
 
 This skill filters out-of-scope content and consolidates related material into clearer canonical sections, but does not over-simplify. The notes should remain rich with case studies, data, and detail.
 
+`## What to Learn Next` is a maintained queue, not historical notes. It should stay near the top of the file and remain actionable.
+
 Do:
 
 - Delete entries explicitly marked out of scope in `## User Preference`
@@ -22,6 +24,7 @@ Do:
 - Group related content under clear section headings
 - Consolidate scattered same-topic notes into one canonical section when they are really teaching the same concept
 - Keep all case studies, data points, URLs, names, formulas, and session records intact
+- Keep `## What to Learn Next` focused by removing items already learned this session and preserving or appending worthwhile next questions
 
 Do not:
 
@@ -49,14 +52,19 @@ After merging, keep only the genuinely new session-specific additions, caveats, 
 2. Only delete what is explicitly out of scope.
 3. Never delete in-scope content for any reason.
 4. Session records are evidence, but durable knowledge may be moved into a canonical section.
-5. Never delete or merge entries in `## What I Still Want to Learn`.
+5. `## What to Learn Next` must remain as the second top-level section in the file.
+6. Remove items from `## What to Learn Next` only if they were actually learned this session.
+7. Add newly surfaced in-scope follow-up questions to `## What to Learn Next` when they are specific and worth studying later.
+8. If `## What to Learn Next` was empty before the session, initialize it using the best new in-scope follow-up questions surfaced during the session.
 
 ## Workflow
 
 1. Read `## User Preference`
-2. Delete only explicitly out-of-scope content
-3. Merge and consolidate related content without losing detail
-4. Report what was removed and what remained
+2. Read `## What to Learn Next`
+3. Delete only explicitly out-of-scope content
+4. Merge and consolidate related content without losing detail
+5. Update `## What to Learn Next` by removing covered items and appending newly discovered worthwhile next questions
+6. Report what was removed and what remained
 
 ## If Notes File Does Not Exist
 
@@ -69,6 +77,10 @@ If `notes/webcafe.md` does not exist, create it with this template:
 
 [Placeholder — user should fill this in to set scope for future sessions]
 
+## What to Learn Next
+
+[Empty — to be filled with the next in-scope questions to study]
+
 ## What I Know Now
 
 [Empty — to be filled after first learning session]
@@ -77,9 +89,6 @@ If `notes/webcafe.md` does not exist, create it with this template:
 
 [Empty — to be filled after first learning session]
 
-## What I Still Want to Learn
-
-[Empty — to be filled after first learning session]
 ```
 
 ## Report Format
