@@ -1,5 +1,5 @@
 ---
-name: check-google-trends
+name: use-google-trends
 description: Use Google Trends to compare keyword demand and capture top queries. Returns raw data with no forced conclusion.
 ---
 

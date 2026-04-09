@@ -1,5 +1,5 @@
 ---
-name: check-serp-inspection
+name: serp-inspection
 description: Inspect live search results to judge SEO competition, SERP weakness, and whether a keyword is realistically beatable.
 ---
 
@@ -14,9 +14,6 @@ This skill is about deciding whether a solo founder can win.
 All SERP inspection must go through the `web-access` skill.
 
 - Load `web-access` first.
-- Use the local browser CDP proxy through `curl` calls to `http://127.0.0.1:3456`.
-- Operate in your own background tab.
-- Close tabs you created after the inspection is complete.
 
 Do not use generic assumptions about what ranks. Look at the real SERP.
 

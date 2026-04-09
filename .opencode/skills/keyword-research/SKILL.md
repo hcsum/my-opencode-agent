@@ -23,12 +23,11 @@ Use all of these when relevant and available:
 
 1. `notes/webcafe.md`
 2. `seo` MCP tools
-3. `check-google-trends`
-4. `check-serp-inspection`
+3. `use-google-trends`
+4. `serp-inspection`
 5. `x-search`
 6. `web-access`
-
-`web-access` may be used to browse any useful site, including Reddit, forums, directories, product sites, Chrome Web Store, Product Hunt, GitHub, and niche communities.
+7. `use-semrush`
 
 ## Before Starting
 
@@ -42,7 +41,7 @@ If `notes/webcafe.md` does not exist, continue anyway, but say that the Web.Cafe
 
 ### 1. Define the search space
 
-Start from the user's topic, product area, or interest.
+Start from the hints and clues gathered in the `notes/webcafe.md` file.
 
 Expand into candidate phrases using:
 
@@ -74,7 +73,7 @@ Useful `seo` MCP tools include:
 
 ### 3. Compare trends intentionally
 
-Use `check-google-trends` to compare close variants.
+Use `use-google-trends` to compare close variants.
 
 Use Trends to answer questions like:
 
@@ -87,7 +86,7 @@ Do not treat Trends as search volume.
 
 ### 4. Inspect the live SERP
 
-Use `check-serp-inspection` and follow its workflow.
+Use `serp-inspection` and follow its workflow.
 
 For shortlisted keywords, determine:
 
