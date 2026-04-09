@@ -24,19 +24,56 @@ bash .opencode/skills/web-access/scripts/check-deps.sh
 
 web-access 不会自动抢占用户的日常浏览器。首次使用或检测不到浏览器时，需要用户先选择一个浏览器实例，然后由 agent 直接执行启动命令。
 
+关键是让带 `remote debugging` 的浏览器实例保持运行，不是让启动它的终端窗口必须一直开着。
+
+- 前台启动时，终端会一直占着，直到浏览器退出
+- 后台启动时，命令可以立刻返回，但浏览器实例仍需继续运行
+- 只要浏览器实例还活着，agent 就能继续连接它的调试端口
+
 #### 交互选择流程
 
-当 check-deps.sh 报告 `browser: not connected` 时，必须先询问用户要用哪一个浏览器，等用户明确选择后，再由 agent 直接执行对应启动命令。给用户选择：
+当 check-deps.sh 报告 `browser: not connected` 时，必须先做两步确认，再由 agent 执行启动命令：
+
+1. 先确认用户要用哪一个浏览器
+2. 再确认要用默认 profile，还是独立 profile
+
+给用户选择浏览器：
 
 支持的浏览器：任意 Chromium 内核浏览器（Brave、Chrome、Chrome Canary、Edge、Chromium）
+
+如果用户选择独立 profile，再检查所选浏览器对应的 `/tmp` web-access profile 是否已经存在：
+
+- `Brave` -> `/tmp/brave-web-access`
+- `Chrome` -> `/tmp/chrome-web-access`
+- `Edge` -> `/tmp/edge-web-access`
+- `Chrome Canary` -> `/tmp/chrome-canary-web-access`
+- `Chromium` -> `/tmp/chromium-web-access`
+
+如果对应目录已存在，直接复用同一个 `--user-data-dir` 路径启动，避免新建空 profile，尽量保留已有登录态。
+
+只有在对应 `/tmp` profile 不存在时，才按默认路径新建一个新的 profile。
+
+独立 profile 的约定是固定放在 `/tmp` 下，不要改用别的临时命名路径，避免下次找不到同一套状态。
 
 展示给用户这个提示：
 
 检测不到浏览器。请选择一个 Chromium 浏览器，可以选择主力浏览器，好处是延用登录状态，但每次开启cdp交互可能需要弹窗确认debug授权。也可以选择自己不常用的浏览器，好处是可以开一个独立profile，这样不会触发debug授权。
 
+在用户选完浏览器后，再补问一句：使用默认 profile，还是独立 profile？
+
+- 默认 profile：尽量复用该浏览器当前已有的登录态、扩展和日常环境，但可能触发 debug 授权确认
+- 独立 profile：固定使用 `/tmp` 下的 web-access profile，和日常环境隔离，更适合长期给 agent 用，也更不容易反复弹授权
+
 根据用户选择，agent 执行对应命令：
 
 **选择 1（Brave）**：
+```bash
+open -na "Brave Browser" --args \
+  --remote-debugging-port=9222
+```
+
+如果用户为 `Brave` 选择独立 profile，则改为：
+
 ```bash
 open -na "Brave Browser" --args \
   --remote-debugging-port=9222 \
@@ -46,11 +83,25 @@ open -na "Brave Browser" --args \
 **选择 2（Chrome）**：
 ```bash
 open -na "Google Chrome" --args \
+  --remote-debugging-port=9222
+```
+
+如果用户为 `Chrome` 选择独立 profile，则改为：
+
+```bash
+open -na "Google Chrome" --args \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/chrome-web-access
 ```
 
 **选择 3（Edge）**：
+```bash
+open -na "Microsoft Edge" --args \
+  --remote-debugging-port=9222
+```
+
+如果用户为 `Edge` 选择独立 profile，则改为：
+
 ```bash
 open -na "Microsoft Edge" --args \
   --remote-debugging-port=9222 \
@@ -60,11 +111,25 @@ open -na "Microsoft Edge" --args \
 **选择 4（Chrome Canary）**：
 ```bash
 open -na "Google Chrome Canary" --args \
+  --remote-debugging-port=9222
+```
+
+如果用户为 `Chrome Canary` 选择独立 profile，则改为：
+
+```bash
+open -na "Google Chrome Canary" --args \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/chrome-canary-web-access
 ```
 
 **选择 5（Chromium）**：
+```bash
+open -na "Chromium" --args \
+  --remote-debugging-port=9222
+```
+
+如果用户为 `Chromium` 选择独立 profile，则改为：
+
 ```bash
 open -na "Chromium" --args \
   --remote-debugging-port=9222 \
@@ -74,6 +139,8 @@ open -na "Chromium" --args \
 > Linux 和 Windows 没有 `open -na`，应改为直接执行浏览器可执行文件并追加同样的 `--remote-debugging-port` 与 `--user-data-dir` 参数。
 
 agent 启动浏览器后，先等待 3 秒，再重新运行 `check-deps.sh` 验证，避免浏览器尚未完成启动时过早检查。
+
+这里的要求是浏览器实例继续运行即可；如果使用后台启动方式，启动命令所在的终端不需要一直保持打开。
 
 ```bash
 sleep 3 && bash .opencode/skills/web-access/scripts/check-deps.sh

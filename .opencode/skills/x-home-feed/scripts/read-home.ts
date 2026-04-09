@@ -20,6 +20,11 @@ interface FeedItem {
   time: string;
 }
 
+function isPromotedText(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return normalized.includes("promoted") || normalized.includes("推广");
+}
+
 function clampLimit(input?: number): number {
   if (!Number.isFinite(input)) return 40;
   const n = Math.floor(Number(input));
@@ -91,6 +96,9 @@ async function readHomeFeed(input: ReadHomeInput): Promise<ScriptResult> {
           const cards = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
 
           for (const card of cards) {
+            const cardText = (card.textContent || '').trim();
+            if (cardText && (${isPromotedText.toString()})(cardText)) continue;
+
             const text = Array.from(card.querySelectorAll('[data-testid="tweetText"]'))
               .map((el) => (el.textContent || '').trim())
               .join(' ')

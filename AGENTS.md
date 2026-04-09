@@ -117,31 +117,3 @@ If the type is unclear, ask one short clarification question instead of guessing
 2. 调查结束后，关闭自己打开的所有 tab，只保留用户原本已有的 tab
 3. 返回结果时附上有价值的链接
 4. 搜索词无结果时先简化再搜；长句拆成关键词再搜
-
-## CDP 点击避坑指南
-
-### `/clickAt` 有 selector 冲突 bug
-
-当多个元素共享相同 CSS selector 时，`/clickAt` 会选错目标（常选到列表中第一个元素），而非目标元素。
-
-**对策**：给目标元素设置唯一 ID，再点击该 ID。
-
-```javascript
-// 错误：多个 p.cursor-pointer 共存时选错
-curl -X POST "http://localhost:3456/clickAt?target=XXX" -d 'p.cursor-pointer'
-
-// 正确：先给目标设唯一 ID
-curl -d '(el => { el.id = "my-unique-target"; })(Array.from(document.querySelectorAll("p.cursor-pointer")).find(e => e.textContent.includes("目标文本")))'
-// 然后点击唯一 ID
-curl -X POST "http://localhost:3456/clickAt?target=XXX" -d '#my-unique-target'
-```
-
-### SPA 导航验证必须查 `/targets`
-
-对于 Web.Cafe 这类 SPA，点击后**必须**通过 `/targets` 确认是否生成了新 tab，而不是依赖 URL 变化或页面内容。
-
-**每次点击后的强制检查序列**：
-1. `GET /targets` — 新 tab 存在 = 成功
-2. `GET /info?target=<新tab>` — 确认内容
-
-如果 `/targets` 没有新 tab，说明点击未触发 SPA 路由，需要重试或换方法。
