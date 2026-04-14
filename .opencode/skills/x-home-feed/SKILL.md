@@ -49,7 +49,7 @@ Do not just list posts. Synthesize the feed into a handful of clear takeaways:
 
 Cover enough breadth to reflect the actual feed. It is fine to include several distinct themes if they are genuinely present.
 
-If the user wants examples, include a few representative posts or accounts and keep them inside the numbered points.
+Include a few representative posts or accounts and keep them inside the numbered points.
 
 ## Avoid
 

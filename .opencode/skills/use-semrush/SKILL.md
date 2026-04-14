@@ -15,6 +15,14 @@ Load `web-access` first and run:
 bash .opencode/skills/web-access/scripts/check-deps.sh
 ```
 
+Before running any Semrush workflow, first confirm the Semrush mirror opens normally:
+
+```bash
+curl -s "http://localhost:3456/new?url=https://sem.3ue.co/analytics/overview/?q=example.com&searchType=domain"
+```
+
+Then inspect the opened page. If it redirects to login, shows a permission problem, fails to load, or otherwise does not expose Semrush data, stop the workflow and tell the user to fix the Semrush permission/session issue. Do not continue with fallback research until the user confirms the issue is resolved.
+
 ## Known URL Formats
 
 | Page | URL |
@@ -37,6 +45,52 @@ The script:
 3. Waits for the download to complete
 4. Moves the file to `notes/backlinks/{domain}.csv`
 5. Cleans up the original download and the browser tab
+
+## Keyword Discovery Workflow
+
+Use this workflow when you want to mine a site's existing organic keywords as candidate terms to build around.
+
+Goal:
+- Find a website's organic keywords
+- Filter to `KD 0-40`
+- Sort by traffic from high to low
+- Review the top `50` keywords as candidate opportunities
+
+Recommended target:
+- Start with a site that is already getting SEO traffic in the niche you care about
+- Good candidates are fast-growing new sites or strong niche sites, not giant irrelevant brands
+
+Workflow:
+1. Confirm the Semrush mirror opens normally and exposes Semrush data. If it does not, stop and ask the user to fix the permission/session issue before continuing.
+
+2. Open the organic positions page:
+   ```bash
+   curl -s "http://localhost:3456/new?url=https://sem.3ue.co/analytics/organic/positions/?q={domain}&searchType=domain"
+   ```
+
+3. Wait for the page to load, then confirm you are on `自然排名`.
+
+4. Apply filters:
+   - `KD`: `0-40`
+   - Sort by `流量` descending
+
+5. Review the first `50` keywords.
+
+6. Use those keywords as a candidate pool, then manually judge:
+   - Is the intent relevant to the kind of site you want to build?
+   - Is the current ranking page type something you can reproduce or improve?
+   - Is it a one-off term, or can it expand into related long-tail pages?
+
+7. Prefer keyword clusters, not just one keyword:
+   - Main term
+   - Misspellings / typo terms
+   - adjacent variants
+   - related long-tail pages
+
+Interpretation rule:
+- Do not blindly copy only the head keyword.
+- Look at what the site is repeatedly targeting across its top keywords. That repeated pattern is often the real strategy.
+- Example: a site may start from one big game keyword, then expand into adjacent game names, typo variants, and similar game pages.
 
 ## Manual Workflow
 

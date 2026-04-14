@@ -25,10 +25,23 @@ interface PromptResponse {
   };
 }
 
+export interface TurnInput {
+  text: string;
+  senderName: string;
+  chatTitle?: string;
+  timestamp: Date;
+}
+
+const CHANNEL_SESSION_TITLES: Record<string, string> = {
+  telegram: "Telegram Andy",
+  gmail: "Gmail Andy",
+};
+
 export class OpencodeSession {
   private readonly client;
   private readonly stateStore: StateStore;
-  private sessionIdPromise?: Promise<string>;
+  private readonly sessionPromises = new Map<string, Promise<string>>();
+  private stateCache?: PersistedState;
 
   constructor(private readonly config: AppConfig) {
     this.client = createOpencodeClient({
@@ -45,14 +58,9 @@ export class OpencodeSession {
     console.log(`[opencode] connected; visibleSessions=${sessions.length}`);
   }
 
-  async sendTelegramTurn(input: {
-    text: string;
-    senderName: string;
-    chatTitle?: string;
-    timestamp: Date;
-  }): Promise<string> {
-    const sessionId = await this.getOrCreateSessionId();
-    const body = buildPromptBody(input);
+  async sendTurn(channel: string, input: TurnInput): Promise<string> {
+    const sessionId = await this.getOrCreateSessionId(channel);
+    const body = buildPromptBody(channel, input);
 
     const response = await this.unwrap<PromptResponse>(
       this.client.session.prompt({
@@ -70,39 +78,62 @@ export class OpencodeSession {
     return extractText(response.parts) || "No response text returned.";
   }
 
-  private async getOrCreateSessionId(): Promise<string> {
-    if (!this.sessionIdPromise) {
-      this.sessionIdPromise = this.loadOrCreateSessionId();
+  private async getOrCreateSessionId(channel: string): Promise<string> {
+    let promise = this.sessionPromises.get(channel);
+    if (!promise) {
+      promise = this.loadOrCreateSessionId(channel);
+      this.sessionPromises.set(channel, promise);
     }
-    return this.sessionIdPromise;
+    return promise;
   }
 
-  private async loadOrCreateSessionId(): Promise<string> {
-    const state = await this.stateStore.load();
-    if (state.sessionId) {
-      console.log(`[opencode] reusing session ${state.sessionId}`);
+  private async loadOrCreateSessionId(channel: string): Promise<string> {
+    const state = await this.loadState();
+
+    const sessions = state.sessions || {};
+    if (sessions[channel]) {
+      console.log(
+        `[opencode] reusing ${channel} session ${sessions[channel]}`,
+      );
+      return sessions[channel];
+    }
+
+    if (channel === "telegram" && state.sessionId) {
+      sessions[channel] = state.sessionId;
+      await this.saveState({ ...state, sessions });
+      console.log(
+        `[opencode] migrated legacy session ${state.sessionId} to ${channel}`,
+      );
       return state.sessionId;
     }
 
+    const title =
+      channel === "telegram"
+        ? this.config.telegramSessionTitle
+        : CHANNEL_SESSION_TITLES[channel] || `${channel} Andy`;
+
     const session = await this.unwrap<SessionRecord>(
       this.client.session.create({
-        body: { title: this.config.telegramSessionTitle },
+        body: { title },
       }),
     );
 
-    await this.persistSessionId(state, session.id);
-    console.log(`[opencode] created session ${session.id}`);
+    sessions[channel] = session.id;
+    await this.saveState({ ...state, sessions });
+    console.log(`[opencode] created ${channel} session ${session.id}`);
     return session.id;
   }
 
-  private async persistSessionId(
-    state: PersistedState,
-    sessionId: string,
-  ): Promise<void> {
-    await this.stateStore.save({
-      ...state,
-      sessionId,
-    });
+  private async loadState(): Promise<PersistedState> {
+    if (!this.stateCache) {
+      this.stateCache = await this.stateStore.load();
+    }
+    return this.stateCache;
+  }
+
+  private async saveState(state: PersistedState): Promise<void> {
+    this.stateCache = state;
+    await this.stateStore.save(state);
   }
 
   private async unwrap<T>(promise: Promise<ApiResult<T>>): Promise<T> {
@@ -137,14 +168,13 @@ export class OpencodeSession {
   }
 }
 
-function buildPromptBody(input: {
-  text: string;
-  senderName: string;
-  chatTitle?: string;
-  timestamp: Date;
-}): string {
+function buildPromptBody(
+  channel: string,
+  input: TurnInput,
+): string {
+  const label = channel.charAt(0).toUpperCase() + channel.slice(1);
   const lines = [
-    "Telegram message",
+    `${label} message`,
     `Sender: ${input.senderName}`,
     `Chat: ${input.chatTitle || "Direct chat"}`,
     `Timestamp: ${input.timestamp.toISOString()}`,

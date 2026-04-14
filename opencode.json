@@ -4,6 +4,11 @@
   "snapshot": false,
   "instructions": ["AGENTS.md"],
   "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": ["bash", "./scripts/run-chrome-devtools-mcp.sh"],
+      "timeout": 60000
+    },
     "seo": {
       "type": "local",
       "command": ["bash", "./scripts/run-seo-mcp.sh"],

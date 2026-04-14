@@ -1,0 +1,334 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { google } from "googleapis";
+import type { gmail_v1 } from "googleapis";
+import type { OAuth2Client } from "google-auth-library";
+
+import type { AppConfig } from "./types.js";
+import { SerialQueue } from "./queue.js";
+import { OpencodeSession } from "./opencode.js";
+import { isProcessed, markProcessed } from "./db.js";
+
+interface ThreadMeta {
+  senderEmail: string;
+  senderName: string;
+  subject: string;
+  messageId: string;
+}
+
+export class GmailBridge {
+  private oauth2Client: OAuth2Client | null = null;
+  private gmail: gmail_v1.Gmail | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly threadMeta = new Map<string, ThreadMeta>();
+  private consecutiveErrors = 0;
+  private userEmail = "";
+
+  constructor(
+    private readonly config: AppConfig,
+    private readonly opencode: OpencodeSession,
+    private readonly queue: SerialQueue,
+  ) {}
+
+  async launch(): Promise<void> {
+    this.setupProxy();
+
+    const credDir = path.join(os.homedir(), ".gmail-mcp");
+    const keysPath = path.join(credDir, "gcp-oauth.keys.json");
+    const tokensPath = path.join(credDir, "credentials.json");
+
+    if (!fs.existsSync(keysPath) || !fs.existsSync(tokensPath)) {
+      console.warn(
+        "[gmail] skipping — missing credentials in ~/.gmail-mcp/",
+      );
+      return;
+    }
+
+    const keys = JSON.parse(fs.readFileSync(keysPath, "utf8"));
+    const installed = keys.installed || keys.web;
+    if (!installed) {
+      console.warn("[gmail] skipping — invalid OAuth keys file");
+      return;
+    }
+
+    const tokens = JSON.parse(fs.readFileSync(tokensPath, "utf8"));
+
+    this.oauth2Client = new google.auth.OAuth2(
+      installed.client_id,
+      installed.client_secret,
+      installed.redirect_uris?.[0] || "http://localhost",
+    );
+
+    this.oauth2Client.setCredentials(tokens);
+
+    this.oauth2Client.on("tokens", (newTokens) => {
+      const updated = {
+        ...tokens,
+        ...newTokens,
+      };
+      fs.writeFileSync(tokensPath, JSON.stringify(updated, null, 2), "utf8");
+      console.log("[gmail] refreshed OAuth tokens");
+    });
+
+    this.gmail = google.gmail({ version: "v1", auth: this.oauth2Client });
+
+    const profile = await this.gmail.users.getProfile({ userId: "me" });
+    this.userEmail = profile.data.emailAddress || "";
+    console.log(`[gmail] connected as ${this.userEmail}`);
+
+    await this.pollForMessages();
+    this.schedulePoll();
+
+    console.log(
+      `[gmail] polling every ${this.config.gmailPollIntervalMs}ms; to=${this.config.gmailTo}`,
+    );
+  }
+
+  async stop(): Promise<void> {
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.gmail = null;
+    this.oauth2Client = null;
+    console.log("[gmail] stopped");
+  }
+
+  private schedulePoll(): void {
+    const backoffMs =
+      this.consecutiveErrors > 0
+        ? Math.min(
+            this.config.gmailPollIntervalMs *
+              Math.pow(2, this.consecutiveErrors),
+            30 * 60 * 1000,
+          )
+        : this.config.gmailPollIntervalMs;
+
+    this.pollTimer = setTimeout(() => {
+      this.pollForMessages()
+        .catch((err) => console.error("[gmail] poll error", err))
+        .finally(() => {
+          if (this.gmail) this.schedulePoll();
+        });
+    }, backoffMs);
+  }
+
+  private async pollForMessages(): Promise<void> {
+    if (!this.gmail) return;
+
+    const query = `to:${this.config.gmailTo} newer_than:3d`;
+    console.log(`[gmail] polling: ${query}`);
+    const res = await this.gmail.users.messages.list({
+      userId: "me",
+      q: query,
+      maxResults: 10,
+    });
+
+    const messages = res.data.messages || [];
+
+    let newCount = 0;
+    for (const msg of messages) {
+      if (!msg.id || isProcessed(msg.id)) continue;
+      newCount++;
+      console.log(`[gmail] processing new message ${msg.id}`);
+      try {
+        await this.processMessage(msg.id);
+      } catch (err) {
+        console.error(`[gmail] failed to process message ${msg.id}`, err);
+      }
+    }
+
+    console.log(
+      `[gmail] poll result: ${messages.length} total, ${newCount} new`,
+    );
+    this.consecutiveErrors = 0;
+  }
+
+  private async processMessage(messageId: string): Promise<void> {
+    if (!this.gmail) return;
+
+    const res = await this.gmail.users.messages.get({
+      userId: "me",
+      id: messageId,
+      format: "full",
+    });
+
+    const message = res.data;
+    const headers = message.payload?.headers || [];
+    const threadId = message.threadId || messageId;
+
+    const fromHeader =
+      headers.find((h) => h.name?.toLowerCase() === "from")?.value || "";
+    const subject =
+      headers.find((h) => h.name?.toLowerCase() === "subject")?.value ||
+      "(no subject)";
+    const rfcMessageId =
+      headers.find((h) => h.name?.toLowerCase() === "message-id")?.value || "";
+
+    const { name: senderName, email: senderEmail } = parseFromHeader(
+      fromHeader,
+    );
+
+    const body = this.extractTextBody(message.payload) || "";
+
+    this.threadMeta.set(threadId, {
+      senderEmail,
+      senderName,
+      subject,
+      messageId: rfcMessageId,
+    });
+
+    const textBody = body.trim() || subject;
+    const content = `[Email from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${textBody}`;
+
+    console.log(
+      `[gmail] enqueue from=${senderName} <${senderEmail}> subject=${subject}`,
+    );
+
+    try {
+      const result = await this.queue.enqueue(
+        `gmail from=${senderEmail} subject=${subject}`,
+        async () => {
+          return await this.opencode.sendTurn("gmail", {
+            text: content,
+            senderName,
+            chatTitle: subject,
+            timestamp: new Date(
+              parseInt(message.internalDate || String(Date.now()), 10),
+            ),
+          });
+        },
+      );
+
+      await this.sendReply(threadId, result);
+      await this.markRead(messageId);
+      console.log(`[gmail] replied to thread ${threadId}`);
+    } catch (err) {
+      console.error(`[gmail] failed to process/reply thread ${threadId}`, err);
+    }
+
+    markProcessed(messageId, threadId, subject, senderEmail);
+  }
+
+  private extractTextBody(
+    payload: gmail_v1.Schema$MessagePart | undefined,
+  ): string {
+    if (!payload) return "";
+
+    if (
+      payload.mimeType === "text/plain" &&
+      payload.body?.data
+    ) {
+      return Buffer.from(payload.body.data, "base64url").toString("utf8");
+    }
+
+    if (payload.parts?.length) {
+      for (const part of payload.parts) {
+        const text = this.extractTextBody(part);
+        if (text) return text;
+      }
+    }
+
+    return "";
+  }
+
+  private async sendReply(
+    threadId: string,
+    text: string,
+  ): Promise<void> {
+    if (!this.gmail) return;
+
+    const meta = this.threadMeta.get(threadId);
+    if (!meta) {
+      console.warn(`[gmail] no meta for thread ${threadId}, skipping reply`);
+      return;
+    }
+
+    const subject = meta.subject.startsWith("Re:")
+      ? meta.subject
+      : `Re: ${meta.subject}`;
+
+    const references = meta.messageId
+      ? `In-Reply-To: ${meta.messageId}\r\nReferences: ${meta.messageId}\r\n`
+      : "";
+
+    const raw = [
+      `To: ${meta.senderName} <${meta.senderEmail}>`,
+      `Reply-To: ${this.config.gmailTo}`,
+      `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
+      `${references}Content-Type: text/plain; charset=utf-8`,
+      "",
+      text,
+    ].join("\r\n");
+
+    const encoded = Buffer.from(raw).toString("base64url");
+
+    await this.gmail.users.messages.send({
+      userId: "me",
+      requestBody: {
+        raw: encoded,
+        threadId,
+      },
+    });
+  }
+
+  private async markRead(messageId: string): Promise<void> {
+    if (!this.gmail) return;
+
+    await this.gmail.users.messages.modify({
+      userId: "me",
+      id: messageId,
+      requestBody: {
+        removeLabelIds: ["UNREAD"],
+      },
+    });
+  }
+
+  private setupProxy(): void {
+    if (!this.config.gmailProxy) return;
+
+    process.env.HTTP_PROXY = this.config.gmailProxy;
+    process.env.HTTPS_PROXY = this.config.gmailProxy;
+    process.env.ALL_PROXY = this.config.gmailProxy;
+
+    const agent = new ProxyAgent(this.config.gmailProxy);
+    const origFetch = globalThis.fetch;
+
+    globalThis.fetch = (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : (input as Request).url;
+
+      if (url.includes("googleapis.com") || url.includes("google.com")) {
+        return undiciFetch(input as Parameters<typeof undiciFetch>[0], {
+          ...init,
+          dispatcher: agent,
+        } as Parameters<typeof undiciFetch>[1]) as Promise<Response>;
+      }
+
+      return origFetch(input, init);
+    };
+
+    console.log(`[gmail] using proxy ${this.config.gmailProxy}`);
+  }
+}
+
+function parseFromHeader(from: string): { name: string; email: string } {
+  const match = from.match(/^(.+?)\s*<(.+?)>$/);
+  if (match) {
+    return {
+      name: match[1].trim().replace(/^"|"$/g, ""),
+      email: match[2].trim(),
+    };
+  }
+  if (from.includes("@")) {
+    return { name: from, email: from };
+  }
+  return { name: from, email: from };
+}

@@ -6,10 +6,14 @@ export interface AppConfig {
   opencodeServerPassword?: string;
   telegramSessionTitle: string;
   stateFile: string;
+  gmailTo?: string;
+  gmailPollIntervalMs: number;
+  gmailProxy?: string;
 }
 
 export interface PersistedState {
   sessionId?: string;
+  sessions?: Record<string, string>;
   updatedAt?: string;
 }
 

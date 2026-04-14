@@ -57,7 +57,7 @@ export class TelegramBridge {
       try {
         const result = await this.queue.enqueue(label, async () => {
           const startedAt = Date.now();
-          const response = await this.opencode.sendTelegramTurn({
+          const response = await this.opencode.sendTurn("telegram", {
             text,
             senderName,
             chatTitle: "title" in ctx.chat ? ctx.chat.title : undefined,

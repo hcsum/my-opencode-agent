@@ -35,5 +35,8 @@ export function loadConfig(): AppConfig {
       process.env.TELEGRAM_SESSION_TITLE?.trim() || "Telegram Andy",
     stateFile:
       process.env.STATE_FILE?.trim() || path.join(".data", "state.json"),
+    gmailTo: process.env.GMAIL_TO?.trim() || undefined,
+    gmailPollIntervalMs: Number(process.env.GMAIL_POLL_INTERVAL_MS) || 10000,
+    gmailProxy: process.env.GMAIL_PROXY?.trim() || undefined,
   };
 }

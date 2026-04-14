@@ -25,7 +25,7 @@ bash .opencode/skills/web-access/scripts/check-deps.sh
 Run:
 
 ```bash
-printf '%s' '{"keywords":["<keyword1>","<keyword2>"],"geo":"US","date":"today 12-m"}' | npx tsx .opencode/skills/check-google-trends/scripts/compare.ts
+printf '%s' '{"keywords":["<keyword1>","<keyword2>"],"geo":"US","date":"today 12-m"}' | npx tsx .opencode/skills/use-google-trends/scripts/compare.ts
 ```
 
 - `keywords`: array of 1-5 search terms to compare

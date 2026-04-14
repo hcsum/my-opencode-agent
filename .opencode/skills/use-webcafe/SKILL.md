@@ -26,6 +26,12 @@ printf '%s' '{"action":"open","query":"外链","index":1}' | npx tsx .opencode/s
 
 # Read article by URL
 printf '%s' '{"action":"read","url":"https://new.web.cafe/topic/xxx"}' | npx tsx .opencode/skills/use-webcafe/scripts/browse.ts
+
+# Search messages in default group 7; if no exact matches, return loaded chat context for summary
+printf '%s' '{"action":"messages","query":"haochen"}' | npx tsx .opencode/skills/use-webcafe/scripts/browse.ts
+
+# Search messages in a specific group with up to 5 history loads
+printf '%s' '{"action":"messages","query":"外链","group":"哥飞的朋友们 7 群","maxLoads":5}' | npx tsx .opencode/skills/use-webcafe/scripts/browse.ts
 ```
 
 **Search is the primary navigation**: Always search first. Web.Cafe search covers all content. Search uses Simplified Chinese (e.g. "外链", "挖掘需求", "SEO").
@@ -35,6 +41,15 @@ printf '%s' '{"action":"read","url":"https://new.web.cafe/topic/xxx"}' | npx tsx
 1. `search` — find the article by keyword, note its index
 2. `open` with the index — returns the article URL
 3. `read` with the URL
+
+## How to search group messages
+
+1. Use `messages` with a query string
+2. The script opens `https://new.web.cafe/messages`
+3. It selects `哥飞的朋友们 7 群` by default unless you pass `group`
+4. It enters the query into `搜索消息/昵称`
+5. It scrolls and loads more history up to `maxLoads` times (default 5)
+6. If no exact matches are found, it returns loaded chat messages so you can summarize what was discussed
 
 ## Script Lifecycle
 

@@ -27,6 +27,7 @@ OpenCode workspace with local skills, local notes, and an optional Telegram brid
 - Node.js 22+
 - `uv` / `uvx` available on PATH for the local `seo-mcp` server
 - local sibling repo at `../seo-mcp`
+- Google Chrome available locally if you want to use `chrome-devtools-mcp`
 
 ## Modes
 
@@ -45,6 +46,7 @@ This mode uses:
 - `AGENTS.md`
 - `.opencode/skills/*`
 - `notes/*`
+- local `chrome-devtools` MCP
 - local `seo` MCP
 
 You do not need `.env` for this mode unless a skill or MCP dependency needs secrets like `CAPSOLVER_API_KEY`.
@@ -102,7 +104,10 @@ npm run dev
 
 ## MCP
 
-- `opencode.json` configures a local `seo` MCP server.
+- `opencode.json` configures local `chrome-devtools` and `seo` MCP servers.
+- `scripts/run-chrome-devtools-mcp.sh` starts `chrome-devtools-mcp` through `npx`.
+- By default it uses `--autoConnect --channel stable`.
+- You can override the launch flags with `CHROME_DEVTOOLS_MCP_ARGS`, for example `CHROME_DEVTOOLS_MCP_ARGS="--isolated --channel canary"`.
 - The launcher script `scripts/run-seo-mcp.sh` reads `.env` and starts `seo-mcp` via `uvx`.
 - It is pinned to the sibling local repo at `../seo-mcp`.
 - `CAPSOLVER_API_KEY` is injected through the launcher script: `run-seo-mcp.sh` sources `.env` with `set -a`, exports the variables into the shell environment, and then `uvx` passes that environment through to the `seo-mcp` process.

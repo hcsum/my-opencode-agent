@@ -1,167 +1,283 @@
 ---
 name: keyword-research
-description: Find high-potential keywords by combining Web.Cafe heuristics, SEO data, Google Trends, live SERP inspection, X discussion, and browser research. Save the output to a dedicated keyword research note.
+description: 结合 Semrush、SEO 数据、Google Trends、实时 SERP、X 和网页调研，找到真正值得做的网站关键词机会，并把最终结论写入研究笔记。当用户想找值得做的 SEO 关键词、细分方向、站点机会时，使用这个 skill。
 ---
 
-# Keyword Research
+# 找词 Skill
 
-Use this skill when the user wants promising SEO keywords, niche angles, or site ideas that are actually worth building.
+## 目标
 
-## Primary Goal
+目标不是“找一个看起来有量的词”，而是找到一组：
 
-Find a small set of keywords that look attractive because they combine:
+- 有真实需求
+- 竞争可控
+- 页面意图清晰
+- 能做成页面矩阵或模板化扩展
+- 适合独立开发者切入
 
-- real user demand
-- manageable competition
-- clear page or tool intent
-- evidence of pain, desire, or repeated use cases from real users
-- a realistic attack angle for a solo founder
+最终产物应该是“可做的网站机会”，不是一串孤立关键词。
 
-## Required Sources
+## 必用信息源
 
-Use all of these when relevant and available:
+按这个优先级使用：
 
-1. `notes/webcafe.md`
+1. `use-semrush`
 2. `seo` MCP tools
 3. `use-google-trends`
 4. `serp-inspection`
 5. `x-search`
 6. `web-access`
-7. `use-semrush`
 
-## Before Starting
+## 入口判断
 
-1. Read `notes/webcafe.md` first.
-2. Extract the heuristics that matter for this session.
-3. Use those heuristics as your filter.
+有三种合法起点：
 
-If `notes/webcafe.md` does not exist, continue anyway, but say that the Web.Cafe note base was unavailable.
+1. **用户给了网站**
+   - 先看这个网站的关键词结构
+   - 再扩展到相邻网站
 
-## Research Workflow
+2. **用户给了方向**
+   - 先看这个方向里的大站或成熟站
+   - 再看近 1-2 年起来、还在拿流量的新站
 
-### 1. Define the search space
+3. **用户什么都没给**
+   - 自主选一个足够窄的方向
+   - 先从站点开始，不要从随机 seed keyword 开始
 
-Start from the hints and clues gathered in the `notes/webcafe.md` file.
+硬规则：
 
-Expand into candidate phrases using:
+- 不要从单个候选关键词出发，再只看这个词的排名页
+- 这样会造成 keyword-family bias，最后只会得到同一类词的变体
+- 默认顺序是：`样本站 -> 候选词池 -> 趋势比较 -> SERP 判断`
 
-- direct keyword variants
-- tool-intent modifiers such as `generator`, `checker`, `calculator`, `template`, `maker`, `converter`, `editor`, `analyzer`, `tracker`, `planner`
-- audience or platform modifiers
-- pain-point modifiers
-- workflow and comparison modifiers
+## 样本站原则
 
-Prefer short, concrete, user-language phrases over invented marketing wording.
+先找样本站，不从空白开始猜词。
 
-### 2. Expand with structured keyword data first
+- 优先看同赛道已经跑起来的站
+- 不要只盯最大站，大站很多流量不可复制
+- 样本站可以来自：Web.Cafe、Google SERP、Semrush 里看到的增长站
 
-Use `seo` MCP as the first structured source when available.
+如果用户要“fresh keywords / more keywords / 再来一轮 / practical keywords”这类结果：
 
-At minimum, try to get:
+- 默认不要重复上一轮风格完全相同的 shortlist
+- 要换采样站、换结构、或换子方向
+- 只有在新证据再次证明某个旧词仍然最优时，才允许重复，并说明为什么
 
-- keyword idea expansion
-- keyword difficulty estimates
+## 研究流程
 
-Do not stop at one seed. Expand, cluster, and narrow.
+### 1. 先理解站点或赛道在打什么结构
 
-Useful `seo` MCP tools include:
+不要直接抄头部词。
+
+先判断这个站点或赛道反复在打什么页面结构，例如：
+
+- 工具站常见结构：格式转换、压缩、裁剪、尺寸处理、A to B
+- 游戏站常见结构：玩法页、变体页、角色页、榜单页、wiki 页
+- 内容站常见结构：模板页、比较页、清单页、教程页
+
+真正值得抄的是“重复页面模式”，不是单个词。
+
+### 2. 先用 Semrush 拉结构化词池
+
+优先使用 `use-semrush`。
+
+至少拿到：
+
+- 样本站的自然关键词
+- 按流量排序的候选词池
+- 可见的 KD 区间
+
+默认做法：
+
+- 先看 `KD 0-40`
+- 再按 `流量` 从高到低看前 `50-100` 个词
+- 不要停在一个 seed 或一个站上，要继续扩展、聚类、筛选
+
+如果 `use-semrush` 打不开、跳登录、权限失效、页面加载异常，按 `use-semrush` skill 处理：
+
+- 立即暂停
+- 告诉用户去处理 Semrush 权限或 session 问题
+- 等用户明确确认“已经处理好”之后再继续
+
+不要在 Semrush 权限有问题时偷偷绕过去继续做完整找词。
+
+### 3. 再用 SEO 工具补结构化验证
+
+在 Semrush 之后，再使用 `seo` MCP tools 作为辅助验证。
+
+可用工具包括：
 
 - `keyword_generator`
 - `keyword_difficulty`
 - `get_traffic`
 - `get_backlinks_list`
 
-### 3. Compare trends intentionally
+这些工具用于：
 
-Use `use-google-trends` to compare close variants.
+- 扩词
+- 补 KD
+- 看流量或域名情况
+- 验证某个词簇是否值得继续深挖
 
-Use Trends to answer questions like:
+如果 `seo` MCP tools 不可用、报错、连接关闭：
 
-- is the term rising, stable, or fading
-- which wording users prefer
-- which modifiers reveal adjacent needs
-- whether the term looks seasonal or durable
+- 继续使用已经拿到的 Semrush 数据
+- 用 `use-google-trends` 做排序
+- 用 `serp-inspection` 和 `web-access` 做最终判断
+- 不要因为 SEO MCP 挂了就停止研究
 
-Do not treat Trends as search volume.
+### 4. 先删掉假机会
 
-### 4. Inspect the live SERP
+先淘汰这些词：
 
-Use `serp-inspection` and follow its workflow.
+- 品牌词和品牌错拼词
+- 明显有 IP / 商标风险的词
+- 只能做成单页、无法扩展成长尾页的单点词
+- 虽然 KD 低，但 SERP 前排被巨头卡死的词
 
-For shortlisted keywords, determine:
+巨头锁死常见信号：
 
-- what intent Google is rewarding
-- whether the top results are strong or weak
-- whether forums, mediocre tools, stale listicles, or weak programmatic pages are ranking
-- whether a solo founder could ship a better page or tool
+- 多个强品牌工具站占满前排
+- App Store / Google Play / Steam / 大平台占掉核心位置
+- 大型媒体、百科、平台型网站垄断主意图
 
-### 5. Cross-check real user language
+### 5. 找词簇，不找单词
 
-Use `x-search` to see what people are saying on X about the topic, product category, or pain point.
+真正值得做的是词簇，不是单个词。
 
-Look for:
+优先选择能自然扩展成多个页面的词：
 
-- repeated complaints
-- feature requests
-- use-case language
-- comparisons between tools
-- signs that a phrase is emerging or becoming normalized
+- 主词
+- 近义表达
+- 错拼词
+- 相邻玩法或相邻意图
+- 同模板下的多个页面机会
 
-### 6. Browse communities and websites with web-access
+如果一个词天然长不出更多相关页，就要降级，除非它本身极强。
 
-Load `web-access` and browse real sites when community or product evidence is needed.
+### 6. 用 Google Trends 排优先级
 
-Good targets include:
+使用 `use-google-trends` 比较接近候选词。
 
-- Reddit threads and subreddits
+重点判断：
+
+- 过去 12 个月是上涨、平稳还是下滑
+- 哪种表达更接近真实用户语言
+- 是持续需求、阶段性需求，还是纯热点脉冲
+
+规则：
+
+- Trends 只用来排序，不单独决定生死
+- 不要把 Trends 当搜索量
+
+### 7. 必须人工看 SERP
+
+使用 `serp-inspection`，必要时配合 `web-access`。
+
+这是最后的生死判断。
+
+至少要判断：
+
+- Google 认定的主意图是什么
+- 前排页面类型是什么
+- 前排是不是有很多中小站或软柿子页面
+- 你能不能做出明显更好的页面或工具
+
+判断顺序：
+
+1. 先看 SERP 页面类型
+2. 再判断 Google 觉得用户真正想要什么
+3. 再问自己能不能更好满足这个意图
+4. 最后才综合 KD、趋势、其他指标
+
+如果数据看起来不错，但 SERP 前排全是强站强页，要降级。
+
+### 8. 用真实社区语言补一层验证
+
+使用 `x-search` 看真实用户怎么说这个需求、问题、产品或赛道。
+
+重点找：
+
+- 重复抱怨
+- 功能请求
+- 用户原话
+- 工具对比
+- 需求是否正在形成固定表达
+
+如果需要更多产品或社区上下文，再用 `web-access` 看：
+
+- Reddit
 - niche forums
-- Product Hunt launches
-- GitHub issues and discussions
+- Product Hunt
+- GitHub issues / discussions
 - Chrome Web Store reviews
-- app marketplaces
-- competitor landing pages
-- template galleries or directories
+- 竞品落地页
+- 模板站或目录站
 
-Use this to validate whether the keyword reflects a real repeated job-to-be-done.
+### 9. 选最终词，不要贪多
 
-### 7. Judge keyword quality
+优先级按这个顺序判断：
 
-A keyword is high potential when several of these are true:
+1. 意图干净
+2. 有词簇
+3. KD 不高或相对机会可做
+4. 趋势没死
+5. SERP 前排有软柿子
 
-- demand looks stable or rising
-- wording is natural and specific
-- difficulty is low or moderate relative to the opportunity
-- the SERP has visible weakness
-- users clearly want a tool, template, workflow, or comparison page
-- a focused solo-founder page could satisfy the intent better than current results
-- adjacent community signal matches the search behavior
+第一次推荐不要太多，优先给一小组最能落地的词。
 
-Reject keywords when several of these are true:
+### 10. 从词进入站点结构
 
-- vague or broad intent
-- no visible user pain
-- SERP dominated by giant trusted brands with excellent pages
-- weak or purely novelty traffic with no repeat value
-- no plausible page you could build that is meaningfully better
+推荐关键词时，不只给词，还要给页面角度。
 
-## Output Expectations
+- 首页打核心词
+- 内页打长尾词、变体词、相邻词
+- 优先选能模板化扩展的结构
+- 如果词天然适合榜单、记录、活动、社区互动，也要指出后续产品化方向
 
-Default to a compact research memo with:
+## 关键词质量判断
 
-1. top keyword opportunities
-2. why each one looks attractive
-3. the recommended page or tool angle
-4. notable risks or reasons to avoid near-misses
+高潜力关键词通常同时满足多项：
 
-## Notes Output
+- 需求稳定或在上升
+- 表达自然具体
+- 竞争可控
+- SERP 有明显弱点
+- 用户想要的是工具、模板、流程页、比较页或明确页面形态
+- 独立开发者有机会做出更好的页面
+- 社区语言和搜索意图能对上
+- 它属于一个词簇，不是孤立单词
+- 页面类型可以复制和扩展
 
-Write the durable result to:
+应淘汰的情况：
+
+- 意图太泛
+- 看不到明确用户痛点
+- 前排被强品牌强页面垄断
+- 纯热点、无复用价值
+- 你做不出明显更好的页面
+- 本质是品牌词
+- 吸引力只来自某个狭窄词系，而不是更广的需求结构
+
+## 输出要求
+
+默认输出必须包含这四部分：
+
+1. 本次采样使用了哪些网站
+2. 推荐关键词表格及其 stats
+3. 每个推荐词为什么入选
+4. 哪些词没有进名单，以及原因
+
+## Notes 输出
+
+只把最终结论写入：
 
 `notes/keyword-research.md`
 
-If the file does not exist, create it.
+如果文件不存在，就创建。
 
-Append each new session with this structure:
+每次追加使用这个结构：
 
 ```markdown
 <ISO timestamp>
@@ -171,7 +287,18 @@ Append each new session with this structure:
 
 [what was researched]
 
-### Best Opportunities
+### Sampling Summary
+
+- websites used: ...
+- why these sites were sampled: ...
+
+### Recommended Keywords
+
+| Keyword | Source Site | Volume / Trend | KD | SERP Summary | Recommended Angle |
+|---------|-------------|----------------|----|--------------|-------------------|
+| ... | ... | ... | ... | ... | ... |
+
+### Selection Reasons
 
 - keyword: ...
   - why: ...
@@ -180,38 +307,22 @@ Append each new session with this structure:
   - community: ...
   - build: ...
 
-### Rejected Or Weak Keywords
+### Not Selected
 
 - keyword: ...
   - reason: ...
-
-### Sources Used
-
-- Web.Cafe notes
-- SEO MCP
-- Google Trends
-- SERP inspection
-- X search
-- browser research
 ```
 
-Preserve concrete evidence. Keep URLs, community phrases, and platform names when they help future sessions.
+只写最终结论和必要证据。
 
-## Browser Rules
+不要把完整研究过程、临时猜测、所有中间步骤都写进去。
 
-When using `web-access`:
+## 禁止事项
 
-- operate in your own background tabs
-- track every `targetId` you create
-- close every tab you created before finishing
-- prefer direct inspection over assumptions
-
-## Avoid
-
-- picking keywords from metrics alone
-- treating Trends as volume
-- trusting keyword difficulty without checking the SERP
-- stopping after one source
-- browsing Reddit or X without extracting concrete language or demand signal
-- recommending keywords without a clear page or tool concept
-- writing only conclusions to the note and dropping the evidence
+- 不要只看 metrics 就下结论
+- 不要把 Trends 当搜索量
+- 不要不看 SERP 就信 KD
+- 不要只看一个来源就结束
+- 不要在研究过程中读取 `notes/keyword-research.md`
+- 不要只给关键词，不给页面或工具角度
+- 不要把完整研究过程 dump 到 `notes/keyword-research.md`
