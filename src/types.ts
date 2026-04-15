@@ -4,6 +4,7 @@ export interface AppConfig {
   opencodeBaseUrl: string;
   opencodeServerUsername?: string;
   opencodeServerPassword?: string;
+  gmailModel?: string;
   telegramSessionTitle: string;
   stateFile: string;
   gmailTo?: string;

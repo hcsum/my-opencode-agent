@@ -61,11 +61,13 @@ export class OpencodeSession {
   async sendTurn(channel: string, input: TurnInput): Promise<string> {
     const sessionId = await this.getOrCreateSessionId(channel);
     const body = buildPromptBody(channel, input);
+    const model = resolveChannelModel(this.config, channel);
 
     const response = await this.unwrap<PromptResponse>(
       this.client.session.prompt({
         path: { id: sessionId },
         body: {
+          ...(model ? { model } : {}),
           parts: [{ type: "text", text: body }],
         },
       }),
@@ -213,6 +215,21 @@ function buildBasicAuthHeader(
   const resolvedUser = username || "opencode";
   const encoded = Buffer.from(`${resolvedUser}:${password}`).toString("base64");
   return `Basic ${encoded}`;
+}
+
+function resolveChannelModel(
+  config: AppConfig,
+  channel: string,
+): { providerID: string; modelID: string } | undefined {
+  const raw = channel === "gmail" ? config.gmailModel : undefined;
+  if (!raw) return undefined;
+
+  const [providerID, modelID] = raw.split("/");
+  if (!providerID || !modelID) {
+    throw new Error(`Invalid model override for channel ${channel}: ${raw}`);
+  }
+
+  return { providerID, modelID };
 }
 
 function extractErrorMessage(error: unknown): string {

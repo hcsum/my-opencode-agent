@@ -31,6 +31,7 @@ export function loadConfig(): AppConfig {
       process.env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
     opencodeServerPassword:
       process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
+    gmailModel: process.env.GMAIL_MODEL?.trim() || undefined,
     telegramSessionTitle:
       process.env.TELEGRAM_SESSION_TITLE?.trim() || "Telegram Andy",
     stateFile:
