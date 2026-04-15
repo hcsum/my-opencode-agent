@@ -97,3 +97,7 @@ If the type is unclear, ask one short clarification question instead of guessing
 - 搜索后汇报结果时，每一点用 3-4 句话详细总结，不要一句话概括
 - 尽量结合具体数据、案例、社区情绪，让用户有足够的上下文做判断
 
+## 链接格式偏好
+
+- 当给用户发送链接时，不要用引号、反引号或尖括号包裹链接
+- 每个链接必须单独占一行，避免在同一行内串多个链接
