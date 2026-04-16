@@ -32,10 +32,12 @@ Default to a numbered list with moderate detail.
 
 - A short title line is fine when the user asked for a summary or report.
 - Use `1.` `2.` `3.` style numbering.
-- Each item can be 2-4 sentences when needed.
-- Prefer 5-9 items total.
+- Each item can be 2-3 sentences when needed.
+- Prefer 4-7 items total.
 - Put the main signal first and lower-signal items later.
 - Keep citations inline only when they materially help, for example a handle or product name.
+- Prefer grouping similar posts under a shared theme instead of giving each post its own mini-summary.
+- When useful, classify signals by recommendation level first, then summarize within each bucket.
 
 ## How to summarize the home feed
 
@@ -58,3 +60,5 @@ Include a few representative posts or accounts and keep them inside the numbered
 - creating too many section headers or turning the answer into a rigid newsletter template
 - treating a few loud posts as broad consensus
 - confusing engagement bait with meaningful signal
+- repeating the same conclusion across multiple bullets
+- letting lower-signal posts take too much space compared with the strongest signals

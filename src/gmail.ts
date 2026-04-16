@@ -10,7 +10,12 @@ import type { OAuth2Client } from "google-auth-library";
 import type { AppConfig } from "./types.js";
 import { SerialQueue } from "./queue.js";
 import { OpencodeSession } from "./opencode.js";
-import { isProcessed, markProcessed } from "./db.js";
+import {
+  isProcessed,
+  markProcessed,
+  releaseClaim,
+  tryClaimMessage,
+} from "./db.js";
 
 interface ThreadMeta {
   senderEmail: string;
@@ -132,11 +137,16 @@ export class GmailBridge {
     let newCount = 0;
     for (const msg of messages) {
       if (!msg.id || isProcessed(msg.id)) continue;
+      if (!tryClaimMessage(msg.id)) {
+        console.log(`[gmail] skipped claimed message ${msg.id}`);
+        continue;
+      }
       newCount++;
       console.log(`[gmail] processing new message ${msg.id}`);
       try {
         await this.processMessage(msg.id);
       } catch (err) {
+        releaseClaim(msg.id);
         console.error(`[gmail] failed to process message ${msg.id}`, err);
       }
     }
@@ -150,11 +160,14 @@ export class GmailBridge {
   private async processMessage(messageId: string): Promise<void> {
     if (!this.gmail) return;
 
+    const startedAt = Date.now();
+
     const res = await this.gmail.users.messages.get({
       userId: "me",
       id: messageId,
       format: "full",
     });
+    console.log(`[gmail] fetched ${messageId} in ${Date.now() - startedAt}ms`);
 
     const message = res.data;
     const headers = message.payload?.headers || [];
@@ -181,7 +194,7 @@ export class GmailBridge {
       messageId: rfcMessageId,
     });
 
-    const textBody = body.trim() || subject;
+    const textBody = stripQuotedReply(body).trim() || subject;
     const content = `[Email from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${textBody}`;
 
     console.log(
@@ -189,25 +202,50 @@ export class GmailBridge {
     );
 
     try {
+      const queuedAt = Date.now();
       const result = await this.queue.enqueue(
         `gmail from=${senderEmail} subject=${subject}`,
         async () => {
-          return await this.opencode.sendTurn("gmail", {
+          const opencodeStartedAt = Date.now();
+          const response = await this.opencode.sendTurn("gmail", {
             text: content,
             senderName,
             chatTitle: subject,
             timestamp: new Date(
               parseInt(message.internalDate || String(Date.now()), 10),
             ),
+            sessionKey: `gmail:${threadId}`,
+            sessionTitle: `Gmail ${subject}`,
           });
+          console.log(
+            `[gmail] opencode completed ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
+          );
+          return response;
         },
       );
 
+      console.log(
+        `[gmail] queue+opencode completed ${messageId} in ${Date.now() - queuedAt}ms`,
+      );
+
+      const replyStartedAt = Date.now();
       await this.sendReply(threadId, result);
+      console.log(
+        `[gmail] reply sent ${messageId} in ${Date.now() - replyStartedAt}ms`,
+      );
+
+      const markReadStartedAt = Date.now();
       await this.markRead(messageId);
-      console.log(`[gmail] replied to thread ${threadId}`);
+      console.log(
+        `[gmail] marked read ${messageId} in ${Date.now() - markReadStartedAt}ms`,
+      );
+      console.log(
+        `[gmail] replied to thread ${threadId} total=${Date.now() - startedAt}ms`,
+      );
     } catch (err) {
+      releaseClaim(messageId);
       console.error(`[gmail] failed to process/reply thread ${threadId}`, err);
+      throw err;
     }
 
     markProcessed(messageId, threadId, subject, senderEmail);
@@ -331,4 +369,54 @@ function parseFromHeader(from: string): { name: string; email: string } {
     return { name: from, email: from };
   }
   return { name: from, email: from };
+}
+
+function stripQuotedReply(body: string): string {
+  const normalized = body.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const kept: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (trimmed === "--" || trimmed === "__") {
+      break;
+    }
+
+    if (trimmed.startsWith(">")) {
+      break;
+    }
+
+    if (isReplyHeader(trimmed)) {
+      break;
+    }
+
+    kept.push(line);
+  }
+
+  return kept.join("\n").trim();
+}
+
+function isReplyHeader(line: string): boolean {
+  if (!line) return false;
+
+  return (
+    /^On .+wrote:$/i.test(line) ||
+    /^在.+写道：$/i.test(line) ||
+    /^.+于.+写道：$/i.test(line) ||
+    /^.+ wrote:$/i.test(line) ||
+    /^-+Original Message-+$/i.test(line) ||
+    /^-+ Forwarded message -+$/i.test(line) ||
+    /^From:\s+/i.test(line) ||
+    /^Sent:\s+/i.test(line) ||
+    /^Date:\s+/i.test(line) ||
+    /^Subject:\s+/i.test(line) ||
+    /^To:\s+/i.test(line) ||
+    /^发件人：/i.test(line) ||
+    /^发送时间：/i.test(line) ||
+    /^日期：/i.test(line) ||
+    /^主题：/i.test(line) ||
+    /^收件人：/i.test(line)
+  );
 }

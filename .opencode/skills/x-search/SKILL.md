@@ -63,6 +63,13 @@ When reporting back, prefer a concise synthesis with:
 
 If the user wants examples, include a few representative posts or accounts, but keep the focus on analysis rather than raw listing.
 
+## Response shaping
+
+- Prefer 3-6 compressed sections or buckets instead of long enumerations.
+- Group overlapping posts under one conclusion instead of repeating the same point post by post.
+- Default to quality tiers when useful: `一手消息，最推荐`、`二手消息但有见解，可看`、`纯搬运/低洞见，低推荐`.
+- Keep low-signal content short; spend most of the space on the highest-signal posts and conclusions.
+
 ## Avoid
 
 - starting with long over-specified queries
@@ -70,3 +77,5 @@ If the user wants examples, include a few representative posts or accounts, but 
 - dumping a long list of posts with no synthesis
 - treating a few loud posts as broad consensus
 - confusing engagement bait with meaningful signal
+- repeating the same takeaway in multiple sections
+- expanding weak or hype-heavy posts just to make the answer feel complete

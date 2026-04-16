@@ -30,6 +30,8 @@ export interface TurnInput {
   senderName: string;
   chatTitle?: string;
   timestamp: Date;
+  sessionKey?: string;
+  sessionTitle?: string;
 }
 
 const CHANNEL_SESSION_TITLES: Record<string, string> = {
@@ -59,7 +61,7 @@ export class OpencodeSession {
   }
 
   async sendTurn(channel: string, input: TurnInput): Promise<string> {
-    const sessionId = await this.getOrCreateSessionId(channel);
+    const sessionId = await this.getOrCreateSessionId(channel, input);
     const body = buildPromptBody(channel, input);
     const model = resolveChannelModel(this.config, channel);
 
@@ -80,39 +82,48 @@ export class OpencodeSession {
     return extractText(response.parts) || "No response text returned.";
   }
 
-  private async getOrCreateSessionId(channel: string): Promise<string> {
-    let promise = this.sessionPromises.get(channel);
+  private async getOrCreateSessionId(
+    channel: string,
+    input: TurnInput,
+  ): Promise<string> {
+    const sessionKey = input.sessionKey || channel;
+    let promise = this.sessionPromises.get(sessionKey);
     if (!promise) {
-      promise = this.loadOrCreateSessionId(channel);
-      this.sessionPromises.set(channel, promise);
+      promise = this.loadOrCreateSessionId(channel, input, sessionKey);
+      this.sessionPromises.set(sessionKey, promise);
     }
     return promise;
   }
 
-  private async loadOrCreateSessionId(channel: string): Promise<string> {
+  private async loadOrCreateSessionId(
+    channel: string,
+    input: TurnInput,
+    sessionKey: string,
+  ): Promise<string> {
     const state = await this.loadState();
 
     const sessions = state.sessions || {};
-    if (sessions[channel]) {
+    if (sessions[sessionKey]) {
       console.log(
-        `[opencode] reusing ${channel} session ${sessions[channel]}`,
+        `[opencode] reusing ${sessionKey} session ${sessions[sessionKey]}`,
       );
-      return sessions[channel];
+      return sessions[sessionKey];
     }
 
     if (channel === "telegram" && state.sessionId) {
-      sessions[channel] = state.sessionId;
+      sessions[sessionKey] = state.sessionId;
       await this.saveState({ ...state, sessions });
       console.log(
-        `[opencode] migrated legacy session ${state.sessionId} to ${channel}`,
+        `[opencode] migrated legacy session ${state.sessionId} to ${sessionKey}`,
       );
       return state.sessionId;
     }
 
     const title =
-      channel === "telegram"
+      input.sessionTitle ||
+      (channel === "telegram"
         ? this.config.telegramSessionTitle
-        : CHANNEL_SESSION_TITLES[channel] || `${channel} Andy`;
+        : CHANNEL_SESSION_TITLES[channel] || `${channel} Andy`);
 
     const session = await this.unwrap<SessionRecord>(
       this.client.session.create({
@@ -120,9 +131,9 @@ export class OpencodeSession {
       }),
     );
 
-    sessions[channel] = session.id;
+    sessions[sessionKey] = session.id;
     await this.saveState({ ...state, sessions });
-    console.log(`[opencode] created ${channel} session ${session.id}`);
+    console.log(`[opencode] created ${sessionKey} session ${session.id}`);
     return session.id;
   }
 

@@ -1,13 +1,9 @@
 ---
 name: refine-web-cafe-notes
-description: Filter and consolidate Web.Cafe learning notes using User Preference. Remove only explicitly out-of-scope content, and merge scattered same-topic notes into a clear canonical section without losing evidence.
+description: Filter and consolidate Web.Cafe learning notes using What I care about. Remove only explicitly out-of-scope content, and merge scattered same-topic notes into a clear canonical section without losing evidence.
 ---
 
 # Refine Web.Cafe Notes
-
-## When to Invoke
-
-Call this skill after every `learn-web-cafe` session, before declaring the learning session complete. It can also be triggered manually by the user.
 
 Default notes path: `notes/webcafe.md`
 
@@ -19,7 +15,7 @@ This skill filters out-of-scope content and consolidates related material into c
 
 Do:
 
-- Delete entries explicitly marked out of scope in `## User Preference`
+- Delete entries explicitly marked out of scope in `## What I care about`
 - Merge duplicate or near-duplicate entries on the same topic
 - Group related content under clear section headings
 - Consolidate scattered same-topic notes into one canonical section when they are really teaching the same concept
@@ -48,7 +44,7 @@ After merging, keep only the genuinely new session-specific additions, caveats, 
 
 ## Absolute Rules
 
-1. Never modify `## User Preference` or any content beneath it.
+1. Never modify `## What I care about` or any content beneath it.
 2. Only delete what is explicitly out of scope.
 3. Never delete in-scope content for any reason.
 4. Session records are evidence, but durable knowledge may be moved into a canonical section.
@@ -59,7 +55,7 @@ After merging, keep only the genuinely new session-specific additions, caveats, 
 
 ## Workflow
 
-1. Read `## User Preference`
+1. Read `## What I care about`
 2. Read `## What to Learn Next`
 3. Delete only explicitly out-of-scope content
 4. Merge and consolidate related content without losing detail
@@ -73,7 +69,7 @@ If `notes/webcafe.md` does not exist, create it with this template:
 ```markdown
 # Web.Cafe 学习笔记
 
-## User Preference
+## What I care about
 
 [Placeholder — user should fill this in to set scope for future sessions]
 
