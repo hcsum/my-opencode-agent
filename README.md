@@ -91,6 +91,25 @@ npm install
 npm run dev
 ```
 
+## Sitemap Monitor
+
+- Fixed watchlist lives in `notes/sitemap-watchlist.csv` with header `site,sitemap_url`.
+- Results are written to `notes/sitemap-slugs/<site>.csv` with header `site,slug,first_seen_at`.
+- Each site keeps its own CSV file, with newest discovered rows first.
+- The monitor tries direct fetch first and falls back to the local browser CDP path when direct fetch is blocked.
+
+Run the monitor with the fixed watchlist:
+
+```bash
+npm run monitor:sitemaps
+```
+
+Add temporary targets on the command line:
+
+```bash
+npm run monitor:sitemaps -- --target dashmetry=https://dashmetry.com/sitemap.xml
+```
+
 ## Environment
 
 - `TELEGRAM_BOT_TOKEN`: Telegram bot token, only needed for the Telegram bridge
