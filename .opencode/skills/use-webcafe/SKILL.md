@@ -7,7 +7,15 @@ description: Use the browse script to search, open, and read articles on Web.Caf
 
 ## Strict Access Rule
 
-**Only use the browse script.** Do NOT use WebFetch, CDP tools, or any other access method. If the script fails, stop immediately.
+Use this skill only for Web.Cafe-specific shortcut flows like `search` and `messages`.
+For reading a known article URL or extracting article images/content, use `web-access` instead.
+
+When reading a known article URL with `web-access`, follow this order:
+
+1. First extract the main article text.
+2. Then extract all image URLs from the article body.
+3. If an image is large enough, or the body mentions cues like `见图` or `如下图`, continue and read the image content.
+4. If image reading fails, report the concrete failure reason instead of silently stopping.
 
 ## Prerequisites
 
@@ -24,9 +32,6 @@ printf '%s' '{"action":"search","query":"外链"}' | npx tsx .opencode/skills/us
 # Open result N (0-indexed) — always returns success, use the returned URL with read action
 printf '%s' '{"action":"open","query":"外链","index":1}' | npx tsx .opencode/skills/use-webcafe/scripts/browse.ts
 
-# Read article by URL
-printf '%s' '{"action":"read","url":"https://new.web.cafe/topic/xxx"}' | npx tsx .opencode/skills/use-webcafe/scripts/browse.ts
-
 # Search messages in default group 7; if no exact matches, return loaded chat context for summary
 printf '%s' '{"action":"messages","query":"haochen"}' | npx tsx .opencode/skills/use-webcafe/scripts/browse.ts
 
@@ -35,12 +40,6 @@ printf '%s' '{"action":"messages","query":"外链","group":"哥飞的朋友们 7
 ```
 
 **Search is the primary navigation**: Always search first. Web.Cafe search covers all content. Search uses Simplified Chinese (e.g. "外链", "挖掘需求", "SEO").
-
-## How to read an article
-
-1. `search` — find the article by keyword, note its index
-2. `open` with the index — returns the article URL
-3. `read` with the URL
 
 ## How to search group messages
 
@@ -55,4 +54,5 @@ printf '%s' '{"action":"messages","query":"外链","group":"哥飞的朋友们 7
 
 - The browse script automatically opens a background tab, performs the action, and closes the tab in its finally block
 - No manual tab cleanup is needed
-- If the script fails, stop immediately. Do not fall back to other access methods.
+- This skill only supports `search`, `open`, and `messages`
+- Use `web-access` when you need to read article正文、图片或处理页面异常
