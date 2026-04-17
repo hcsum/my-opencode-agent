@@ -18,6 +18,7 @@ let ws = null;
 let cmdId = 0;
 const pending = new Map();
 const sessions = new Map();
+const portGuardedSessions = new Set();
 
 let WS;
 if (typeof globalThis.WebSocket !== "undefined") {
@@ -170,6 +171,7 @@ async function connectWithUrl(wsUrl) {
       chromePort = null;
       chromeWsPath = null;
       sessions.clear();
+      portGuardedSessions.clear();
     };
     const onMessage = (event) => {
       const raw = typeof event === "string" ? event : event.data || event;
@@ -179,6 +181,15 @@ async function connectWithUrl(wsUrl) {
       if (msg.method === "Target.attachedToTarget") {
         const { sessionId, targetInfo } = msg.params;
         sessions.set(targetInfo.targetId, sessionId);
+      }
+
+      if (msg.method === "Fetch.requestPaused") {
+        const { requestId, sessionId } = msg.params;
+        sendCDP(
+          "Fetch.failRequest",
+          { requestId, errorReason: "ConnectionRefused" },
+          sessionId,
+        ).catch(() => {});
       }
 
       if (msg.id && pending.has(msg.id)) {
@@ -277,9 +288,28 @@ async function ensureSession(targetId) {
   });
   if (response.result?.sessionId) {
     sessions.set(targetId, response.result.sessionId);
+    await enablePortGuard(response.result.sessionId);
     return response.result.sessionId;
   }
   throw new Error(`Failed to attach to target ${targetId}`);
+}
+
+async function enablePortGuard(sessionId) {
+  if (!chromePort || portGuardedSessions.has(sessionId)) return;
+
+  try {
+    await sendCDP(
+      "Fetch.enable",
+      {
+        patterns: [
+          { urlPattern: `http://127.0.0.1:${chromePort}/*`, requestStage: "Request" },
+          { urlPattern: `http://localhost:${chromePort}/*`, requestStage: "Request" },
+        ],
+      },
+      sessionId,
+    );
+    portGuardedSessions.add(sessionId);
+  } catch {}
 }
 
 async function waitForLoad(sessionId, timeoutMs = 15_000) {
