@@ -10,6 +10,10 @@ import { URL } from "node:url";
 const PORT = parseInt(process.env.CDP_PROXY_PORT || "3456", 10);
 const PROXY_BASE_URL = `http://127.0.0.1:${PORT}`;
 const WS_URL_FILE = "/tmp/cdp-browser-ws-url";
+const BROWSER_MODE = process.env.BROWSER_MODE || "dedicated";
+const DEDICATED_PROFILE_DIR =
+  process.env.DEDICATED_PROFILE_DIR ||
+  path.join(os.homedir(), ".web-access/brave-profile");
 let ws = null;
 let cmdId = 0;
 const pending = new Map();
@@ -48,38 +52,44 @@ async function fetchWebSocketUrl(port) {
   }
 }
 
-async function discoverChromePort() {
+async function discoverChromePort(mode = "user") {
   const possiblePaths = [];
   const platform = os.platform();
 
   if (platform === "darwin") {
     const home = os.homedir();
-    possiblePaths.push(
-      path.join(
-        home,
-        "Library/Application Support/Google/Chrome/DevToolsActivePort",
-      ),
-      path.join(
-        home,
-        "Library/Application Support/Google/Chrome Canary/DevToolsActivePort",
-      ),
-      path.join(
-        home,
-        "Library/Application Support/Chromium/DevToolsActivePort",
-      ),
-    );
+    if (mode === "user") {
+      possiblePaths.push(
+        path.join(home, "Library/Application Support/Google/Chrome/DevToolsActivePort"),
+        path.join(home, "Library/Application Support/Google/Chrome Canary/DevToolsActivePort"),
+        path.join(home, "Library/Application Support/Chromium/DevToolsActivePort"),
+        path.join(home, "Library/Application Support/BraveSoftware/Brave-Browser/DevToolsActivePort"),
+      );
+    } else {
+      possiblePaths.push(path.join(DEDICATED_PROFILE_DIR, "DevToolsActivePort"));
+    }
   } else if (platform === "linux") {
     const home = os.homedir();
-    possiblePaths.push(
-      path.join(home, ".config/google-chrome/DevToolsActivePort"),
-      path.join(home, ".config/chromium/DevToolsActivePort"),
-    );
+    if (mode === "user") {
+      possiblePaths.push(
+        path.join(home, ".config/google-chrome/DevToolsActivePort"),
+        path.join(home, ".config/chromium/DevToolsActivePort"),
+        path.join(home, ".config/BraveSoftware/Brave-Browser/DevToolsActivePort"),
+      );
+    } else {
+      possiblePaths.push(path.join(DEDICATED_PROFILE_DIR, "DevToolsActivePort"));
+    }
   } else if (platform === "win32") {
     const localAppData = process.env.LOCALAPPDATA || "";
-    possiblePaths.push(
-      path.join(localAppData, "Google/Chrome/User Data/DevToolsActivePort"),
-      path.join(localAppData, "Chromium/User Data/DevToolsActivePort"),
-    );
+    if (mode === "user") {
+      possiblePaths.push(
+        path.join(localAppData, "Google/Chrome/User Data/DevToolsActivePort"),
+        path.join(localAppData, "Chromium/User Data/DevToolsActivePort"),
+        path.join(localAppData, "BraveSoftware/Brave-Browser/User Data/DevToolsActivePort"),
+      );
+    } else {
+      possiblePaths.push(path.join(DEDICATED_PROFILE_DIR, "DevToolsActivePort"));
+    }
   }
 
   for (const filePath of possiblePaths) {
@@ -96,9 +106,9 @@ async function discoverChromePort() {
     } catch {}
   }
 
-  for (const port of [9222, 9223, 9229, 9333]) {
+  const fixedPorts = mode === "user" ? [9222, 9223, 9229, 9333] : [9222];
+  for (const port of fixedPorts) {
     if (await checkPort(port)) {
-      // Try to get WebSocket URL from CDP protocol endpoint
       const wsUrl = await fetchWebSocketUrl(port);
       if (wsUrl) {
         return { port, wsPath: new URL(wsUrl).pathname };
@@ -220,11 +230,12 @@ async function connect() {
       }
     } catch {}
 
-    // Fall back to port discovery
-    const discovered = await discoverChromePort();
+    const discovered = await discoverChromePort(BROWSER_MODE);
     if (!discovered) {
       throw new Error(
-        "Chrome remote debugging is not available. Enable it in your normal Chrome session first.",
+        BROWSER_MODE === "user"
+          ? "Chrome remote debugging is not available. Enable it in your normal Chrome session first."
+          : "Dedicated browser remote debugging is not available. Start the dedicated Brave instance first.",
       );
     }
     chromePort = discovered.port;
@@ -326,6 +337,7 @@ const server = http.createServer(async (req, res) => {
         JSON.stringify({
           status: "ok",
           connected,
+          browserMode: BROWSER_MODE,
           sessions: sessions.size,
           chromePort,
         }),

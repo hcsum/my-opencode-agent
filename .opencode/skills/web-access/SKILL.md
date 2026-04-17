@@ -30,117 +30,72 @@ web-access 不会自动抢占用户的日常浏览器。首次使用或检测不
 - 后台启动时，命令可以立刻返回，但浏览器实例仍需继续运行
 - 只要浏览器实例还活着，agent 就能继续连接它的调试端口
 
-#### 交互选择流程
+### 两种浏览器模式
 
-当 check-deps.sh 报告 `browser: not connected` 时，必须先做两步确认，再由 agent 执行启动命令：
+web-access 支持两种模式，**不会同时使用两个浏览器**：
 
-1. 先确认用户要用哪一个浏览器
-2. 再确认要用默认 profile，还是独立 profile
+#### Dedicated Browser（默认）
 
-给用户选择浏览器：
+给 web-access 专门用的浏览器，推荐 **Brave**，使用 home 目录下的持久 profile 与主力浏览器隔离。
 
-支持的浏览器：任意 Chromium 内核浏览器（Brave、Chrome、Chrome Canary、Edge、Chromium）
+**端口策略**：固定端口 `9222`，稳定可预测。
 
-如果用户选择独立 profile，再检查所选浏览器对应的 `/tmp` web-access profile 是否已经存在：
-
-- `Brave` -> `/tmp/brave-web-access`
-- `Chrome` -> `/tmp/chrome-web-access`
-- `Edge` -> `/tmp/edge-web-access`
-- `Chrome Canary` -> `/tmp/chrome-canary-web-access`
-- `Chromium` -> `/tmp/chromium-web-access`
-
-如果对应目录已存在，直接复用同一个 `--user-data-dir` 路径启动，避免新建空 profile，尽量保留已有登录态。
-
-只有在对应 `/tmp` profile 不存在时，才按默认路径新建一个新的 profile。
-
-独立 profile 的约定是固定放在 `/tmp` 下，不要改用别的临时命名路径，避免下次找不到同一套状态。
-
-展示给用户这个提示：
-
-检测不到浏览器。请选择一个 Chromium 浏览器，可以选择主力浏览器，好处是延用登录状态，但每次开启cdp交互可能需要弹窗确认debug授权。也可以选择自己不常用的浏览器，好处是可以开一个独立profile，这样不会触发debug授权。
-
-在用户选完浏览器后，再补问一句：使用默认 profile，还是独立 profile？
-
-- 默认 profile：尽量复用该浏览器当前已有的登录态、扩展和日常环境，但可能触发 debug 授权确认
-- 独立 profile：固定使用 `/tmp` 下的 web-access profile，和日常环境隔离，更适合长期给 agent 用，也更不容易反复弹授权
-
-根据用户选择，agent 执行对应命令：
-
-**选择 1（Brave）**：
-```bash
-open -na "Brave Browser" --args \
-  --remote-debugging-port=9222
-```
-
-如果用户为 `Brave` 选择独立 profile，则改为：
-
+**启动命令（macOS）**：
 ```bash
 open -na "Brave Browser" --args \
   --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/brave-web-access
+  --user-data-dir=~/.web-access/brave-profile
 ```
 
-**选择 2（Chrome）**：
+**Linux / Windows**：
 ```bash
-open -na "Google Chrome" --args \
-  --remote-debugging-port=9222
+# 直接执行浏览器可执行文件并追加参数
+/path/to/brave --remote-debugging-port=9222 --user-data-dir=~/.web-access/brave-profile
 ```
 
-如果用户为 `Chrome` 选择独立 profile，则改为：
+如果 `~/.web-access/brave-profile` 已存在，会复用这个 home 目录下的持久 profile 的登录态和设置。
 
+agent 默认使用此模式，不需要用户指定；除非用户明确要求主力浏览器，否则都应优先连接这个 home 目录下的持久 profile。
+
+#### User Browser（需明确要求）
+
+用户的日常主力浏览器，如 Chrome。agent 使用浏览器已有的登录态。
+
+**端口策略**：通过 `DevToolsActivePort` 文件动态发现端口（不固定）。
+
+**设置步骤**：
+1. 打开 Chrome
+2. 地址栏输入 `chrome://inspect/#remote-debugging`
+3. 勾选 **"Allow remote debugging for this browser instance"**
+4. 页面会显示 `Server running at: 127.0.0.1:<端口>`
+
+**使用方式**：用户必须明确说"主力浏览器"、"用 Chrome"、"user browser"，agent 才会切换到此模式。
+
+agent 切换时执行：
 ```bash
-open -na "Google Chrome" --args \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chrome-web-access
+BROWSER_MODE=user bash .opencode/skills/web-access/scripts/check-deps.sh
 ```
 
-**选择 3（Edge）**：
-```bash
-open -na "Microsoft Edge" --args \
-  --remote-debugging-port=9222
-```
-
-如果用户为 `Edge` 选择独立 profile，则改为：
-
-```bash
-open -na "Microsoft Edge" --args \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/edge-web-access
-```
-
-**选择 4（Chrome Canary）**：
-```bash
-open -na "Google Chrome Canary" --args \
-  --remote-debugging-port=9222
-```
-
-如果用户为 `Chrome Canary` 选择独立 profile，则改为：
+### check-deps.sh 参数
 
 ```bash
-open -na "Google Chrome Canary" --args \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chrome-canary-web-access
+check-deps.sh --browser dedicated  # 默认：专用浏览器模式（Brave，home 目录持久 profile，固定端口）
+check-deps.sh --browser user       # 用户浏览器模式（Chrome，DevToolsActivePort）
+check-deps.sh                      # 等同于 dedicated
 ```
 
-**选择 5（Chromium）**：
-```bash
-open -na "Chromium" --args \
-  --remote-debugging-port=9222
-```
+### 模式切换规则
 
-如果用户为 `Chromium` 选择独立 profile，则改为：
+| 用户说... | 模式 | 说明 |
+|-----------|------|------|
+| （没说） | `dedicated` | 默认，使用 home 目录持久 profile 的专用浏览器 |
+| "主力浏览器"、"Chrome"、"user browser" | `user` | Chrome 动态端口 |
+| "Brave"、"专用浏览器" | `dedicated` | Brave 固定端口，使用 home 目录持久 profile |
+| "换浏览器"、"换个浏览器" | 询问 | 让用户选择 |
 
-```bash
-open -na "Chromium" --args \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chromium-web-access
-```
+### 启动验证
 
-> Linux 和 Windows 没有 `open -na`，应改为直接执行浏览器可执行文件并追加同样的 `--remote-debugging-port` 与 `--user-data-dir` 参数。
-
-agent 启动浏览器后，先等待 3 秒，再重新运行 `check-deps.sh` 验证，避免浏览器尚未完成启动时过早检查。
-
-这里的要求是浏览器实例继续运行即可；如果使用后台启动方式，启动命令所在的终端不需要一直保持打开。
+agent 启动浏览器后，等待 3 秒再验证：
 
 ```bash
 sleep 3 && bash .opencode/skills/web-access/scripts/check-deps.sh

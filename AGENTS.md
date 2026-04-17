@@ -114,3 +114,16 @@ If the type is unclear, ask one short clarification question instead of guessing
 
 - 当给用户发送链接时，不要用引号、反引号或尖括号包裹链接
 - 每个链接必须单独占一行，避免在同一行内串多个链接
+
+## URL 规则
+
+- 永远不要猜测或拼凑 URL
+- 如果需要访问搜索结果中的某个链接，必须从页面上提取真实的完整链接，或者在页面上点击跳转
+- 搜索结果中截断的 URL 不能当作完整 URL 使用
+
+## Notes 备份规则
+
+- 当用户要备份这个项目的数据时，默认优先考虑 `notes/`，因为它被 `.gitignore` 忽略，不会随 git commit 保存
+- 默认使用 `.opencode/skills/google-drive-backup` 把整个 `notes/` 目录备份到 Google Drive
+- 不要把 `.env`、`.data/`、`.git/`、`node_modules/`、`dist/` 或 home 目录下的 OAuth 凭证一起备份到 Drive，除非用户明确要求
+- 如果用户没有指定 Google Drive 目标文件夹，先让用户提供 folder ID，或者让用户设置 `GDRIVE_NOTES_BACKUP_FOLDER_ID`

@@ -2,6 +2,40 @@
 
 set -euo pipefail
 
+BROWSER_MODE="${BROWSER_MODE:-dedicated}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEDICATED_PROFILE_DIR="${DEDICATED_PROFILE_DIR:-$HOME/.web-access/brave-profile}"
+
+show_help() {
+  cat <<EOF
+Usage: check-deps.sh [OPTIONS]
+
+  --browser MODE   Browser mode: dedicated (default), user
+                    dedicated: Brave on fixed port 9222 (web-access dedicated)
+                    user:      Chrome via DevToolsActivePort (your main browser)
+
+  Without arguments, uses the default (dedicated) mode.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --browser)
+      BROWSER_MODE="$2"
+      shift 2
+      ;;
+    --help|-h)
+      show_help
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      show_help
+      exit 1
+      ;;
+  esac
+done
+
 if command -v node >/dev/null 2>&1; then
   NODE_VER=$(node --version 2>/dev/null)
   NODE_MAJOR=$(printf '%s' "$NODE_VER" | cut -c2- | cut -d. -f1)
@@ -15,7 +49,9 @@ else
   exit 1
 fi
 
-if ! CHROME_PORT=$(node -e "
+check_node_script() {
+  local mode="$1"
+  node --eval "
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -33,41 +69,63 @@ function checkPort(port) {
 function activePortFiles() {
   const home = os.homedir();
   const localAppData = process.env.LOCALAPPDATA || '';
-  switch (process.platform) {
-    case 'darwin':
-      return [
+  const platform = process.platform;
+  const files = [];
+
+  if (platform === 'darwin') {
+    if (BROWSER_MODE === 'user') {
+      files.push(
         path.join(home, 'Library/Application Support/Google/Chrome/DevToolsActivePort'),
         path.join(home, 'Library/Application Support/Google/Chrome Canary/DevToolsActivePort'),
         path.join(home, 'Library/Application Support/Chromium/DevToolsActivePort'),
-      ];
-    case 'linux':
-      return [
+        path.join(home, 'Library/Application Support/BraveSoftware/Brave-Browser/DevToolsActivePort'),
+      );
+    } else {
+      files.push(path.join(process.env.DEDICATED_PROFILE_DIR || '', 'DevToolsActivePort'));
+    }
+  } else if (platform === 'linux') {
+    if (BROWSER_MODE === 'user') {
+      files.push(
         path.join(home, '.config/google-chrome/DevToolsActivePort'),
         path.join(home, '.config/chromium/DevToolsActivePort'),
-      ];
-    case 'win32':
-      return [
+        path.join(home, '.config/BraveSoftware/Brave-Browser/DevToolsActivePort'),
+      );
+    } else {
+      files.push(path.join(process.env.DEDICATED_PROFILE_DIR || '', 'DevToolsActivePort'));
+    }
+  } else if (platform === 'win32') {
+    if (BROWSER_MODE === 'user') {
+      files.push(
         path.join(localAppData, 'Google/Chrome/User Data/DevToolsActivePort'),
         path.join(localAppData, 'Chromium/User Data/DevToolsActivePort'),
-      ];
-    default:
-      return [];
+        path.join(localAppData, 'BraveSoftware/Brave-Browser/User Data/DevToolsActivePort'),
+      );
+    } else {
+      files.push(path.join(process.env.DEDICATED_PROFILE_DIR || '', 'DevToolsActivePort'));
+    }
   }
+
+  return files;
 }
 
-(async () => {
+const BROWSER_MODE = '$mode';
+const fixedPorts = BROWSER_MODE === 'user' ? [9222, 9229, 9333] : [9222];
+
+async function main() {
   for (const filePath of activePortFiles()) {
     try {
-      const lines = fs.readFileSync(filePath, 'utf8').trim().split(/\\r?\\n/).filter(Boolean);
-      const port = parseInt(lines[0], 10);
-      if (port > 0 && port < 65536 && await checkPort(port)) {
-        console.log(port);
-        process.exit(0);
+      if (fs.existsSync(filePath)) {
+        const lines = fs.readFileSync(filePath, 'utf8').trim().split(/\r?\n/).filter(Boolean);
+        const port = parseInt(lines[0], 10);
+        if (port > 0 && port < 65536 && await checkPort(port)) {
+          console.log(port);
+          process.exit(0);
+        }
       }
     } catch (_) {}
   }
 
-  for (const port of [9222, 9229, 9333]) {
+  for (const port of fixedPorts) {
     if (await checkPort(port)) {
       console.log(port);
       process.exit(0);
@@ -75,39 +133,46 @@ function activePortFiles() {
   }
 
   process.exit(1);
-})();
-" 2>/dev/null); then
-  echo "browser: not connected"
+}
+
+main();
+" 2>&1
+}
+
+if ! CHROME_PORT=$(BROWSER_MODE="$BROWSER_MODE" check_node_script "$BROWSER_MODE" 2>/dev/null); then
+  echo "browser: not connected ($BROWSER_MODE mode)"
   echo ""
-  echo "=== Web Access Browser Setup ==="
-  echo ""
-  echo "web-access 需要一个开启 remote debugging 的浏览器。"
-  echo ""
-  echo "先选择你要使用的浏览器，再在另一个终端启动它（保持那个终端不关闭）："
-  echo ""
-  echo "  1. Brave"
-  echo "  2. Chrome"
-  echo "  3. Edge"
-  echo "  4. Chrome Canary"
-  echo "  5. Chromium"
-  echo "  6. 其他（手动输入路径）"
-  echo ""
-  echo "选择后，按 web-access skill 里的对应命令启动浏览器，再回到本终端重新运行此脚本。"
+  if [ "$BROWSER_MODE" = "user" ]; then
+    echo "=== Chrome (user browser) not found ==="
+    echo ""
+    echo "Open Chrome, go to chrome://inspect/#remote-debugging and check 'Allow remote debugging'."
+    echo "Then restart this script."
+  else
+    echo "=== Brave (dedicated browser) not found ==="
+    echo ""
+    echo "Start Brave with debugging enabled:"
+    echo "  open -na \"Brave Browser\" --args --remote-debugging-port=9222 --user-data-dir=$DEDICATED_PROFILE_DIR"
+  fi
   exit 1
 fi
-echo "browser: ok (port $CHROME_PORT)"
+echo "browser: ok (port $CHROME_PORT, $BROWSER_MODE mode)"
 
 HEALTH=$(curl -s --connect-timeout 3 "http://127.0.0.1:3456/health" 2>/dev/null || true)
 case "$HEALTH" in
   *'"ok"'* )
-    echo "proxy: ready"
-    exit 0
+    if printf '%s' "$HEALTH" | grep -Fq '"browserMode":"'$BROWSER_MODE'"' &&
+       printf '%s' "$HEALTH" | grep -Fq '"chromePort":'$CHROME_PORT; then
+      echo "proxy: ready"
+      exit 0
+    fi
+    echo "proxy: restarting for $BROWSER_MODE mode"
+    pkill -f "cdp-proxy.mjs" 2>/dev/null || true
+    sleep 1
     ;;
 esac
 
 echo "proxy: connecting..."
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-node "$SCRIPT_DIR/cdp-proxy.mjs" >/tmp/opencode-web-access-proxy.log 2>&1 &
+BROWSER_MODE="$BROWSER_MODE" DEDICATED_PROFILE_DIR="$DEDICATED_PROFILE_DIR" node "$SCRIPT_DIR/cdp-proxy.mjs" >/tmp/opencode-web-access-proxy.log 2>&1 &
 sleep 2
 
 i=1
