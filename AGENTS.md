@@ -135,3 +135,17 @@ There are ready-to-run scripts in `.src/scripts/`. Always prefer them over writi
 **Watchlist**: `notes/website-watchlist.csv` — add `site,sitemap_url` rows here for recurring targets  
 **Output**: `notes/sitemap-slugs/<site>.csv` (new slugs prepended, sorted by first_seen_at)  
 **Notes**: Falls back to CDP proxy automatically if direct fetch is blocked
+
+---
+
+### `calculate-kdroi.ts`
+**Purpose**: Read an exported keyword CSV, calculate `KDRoi = (Search Volume × CPC) / Keyword Difficulty`, and write the `kdroi` column back into the same file  
+**Use when**:
+- User already has a keyword CSV under `notes/keywords/`
+- Need a quick sortable commercial-opportunity score without doing live SERP checks  
+
+**Do not use when**: User needs `KGR`, `intitle`, or live competition validation; this script only scores `kdroi` from existing CSV columns  
+**Run**: `npx tsx src/scripts/calculate-kdroi.ts <keywords.csv>`  
+**Input columns**: `Search Volume`, `CPC`, `Keyword Difficulty`  
+**Output**: Updates the original CSV in place, adding or refreshing the `kdroi` column  
+**Notes**: Leaves `kdroi` blank when any required field is missing or `Keyword Difficulty <= 0`; keeps 2 decimal places

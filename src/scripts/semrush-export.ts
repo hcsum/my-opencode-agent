@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_PROCESSING_OPTIONS, updateKdroi } from "./calculate-kdroi.js";
 
 type CliOptions = {
   site: string;
@@ -67,6 +68,7 @@ async function main(): Promise<void> {
       minVolume: options.minVolume,
       maxKd: options.maxKd,
     });
+    await updateKdroi(finalPath, DEFAULT_PROCESSING_OPTIONS);
 
     console.log(finalPath);
   } finally {

@@ -131,7 +131,7 @@ main();
 " 2>&1
 }
 
-if ! CHROME_PORT=$(BROWSER_MODE="$BROWSER_MODE" check_node_script "$BROWSER_MODE" 2>/dev/null); then
+if ! CHROME_PORT=$(BROWSER_MODE="$BROWSER_MODE" DEDICATED_PROFILE_DIR="$DEDICATED_PROFILE_DIR" check_node_script "$BROWSER_MODE" 2>/dev/null); then
   echo "browser: not connected ($BROWSER_MODE mode)"
   echo ""
   if [ "$BROWSER_MODE" = "user" ]; then
