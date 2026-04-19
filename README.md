@@ -11,19 +11,6 @@ OpenCode workspace with local skills, local notes, and an optional Telegram brid
 - queues Telegram requests so prompts never overlap
 - replies to Telegram only when a turn completes
 
-## Included project skills
-
-- `.opencode/skills/web-access` for local browser CDP access through your current Chrome session
-- `.opencode/skills/x-home-feed` for reading and summarizing your X home feed
-- `.opencode/skills/x-search` for searching X posts by keyword or topic
-- `.opencode/skills/use-google-trends` for raw Google Trends comparisons
-- `.opencode/skills/serp-inspection` for live SERP competition analysis
-- `.opencode/skills/learn-seo` for learning durable Web.Cafe methodology into notes
-- `.opencode/skills/refine-web-cafe-notes` for consolidating `notes/webcafe.md`
-- `.opencode/skills/keyword-research` for writing durable keyword memos to `notes/keyword-research.md`
-- `.opencode/skills/validate-keyword` for deciding whether a keyword is worth building around and whether it has commercial value
-- `.opencode/skills/google-drive-backup` for uploading the local `notes/` directory to Google Drive with timestamped snapshots
-
 ## Requirements
 
 - Node.js 22+
