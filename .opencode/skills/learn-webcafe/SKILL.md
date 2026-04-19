@@ -1,5 +1,5 @@
 ---
-name: learn-seo
+name: learn-webcafe
 description: Visit https://web.cafe to learn indie developer growth methodology from experienced practitioners sharing real-world insights on promotion, niche discovery, market research, and mindset.
 ---
 

@@ -15,7 +15,7 @@ When reading a known article URL with `web-access`, follow this order:
 1. First extract the main article text.
 2. Then extract all image URLs from the article body.
 3. If an image is large enough, or the body mentions cues like `见图` or `如下图`, continue and read the image content.
-4. If image reading fails, report the concrete failure reason instead of silently stopping.
+4. If image reading fails, report the concrete failure reason instead of silently skipping.
 
 ## Prerequisites
 

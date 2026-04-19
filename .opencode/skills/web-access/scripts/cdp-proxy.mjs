@@ -32,25 +32,33 @@ if (typeof globalThis.WebSocket !== "undefined") {
   }
 }
 
-async function fetchWebSocketUrl(port) {
+function readConfiguredBrowserWsUrl() {
   try {
-    const resp = await new Promise((resolve, reject) => {
-      const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
-        let body = "";
-        res.on("data", (chunk) => (body += chunk));
-        res.on("end", () => resolve(body));
-      });
-      req.on("error", reject);
-      req.setTimeout(3000, () => {
-        req.destroy();
-        reject(new Error("timeout"));
-      });
-    });
-    const parsed = JSON.parse(resp);
-    return parsed.webSocketDebuggerUrl || null;
+    if (!fs.existsSync(WS_URL_FILE)) return null;
+    const content = fs.readFileSync(WS_URL_FILE, "utf-8").trim();
+    const match = content.match(/^ws_url:\s*(.+)$/);
+    if (!match) return null;
+    const url = new URL(match[1]);
+    if (url.protocol !== "ws:" || url.hostname !== "127.0.0.1") return null;
+
+    const port = parseInt(url.port, 10);
+    if (!(port > 0 && port < 65536)) return null;
+
+    return {
+      url: match[1],
+      port,
+      wsPath: `${url.pathname}${url.search}`,
+    };
   } catch {
     return null;
   }
+}
+
+function isConfiguredUrlCompatible(configured, discovered) {
+  if (!configured || !discovered) return false;
+  if (configured.port !== discovered.port) return false;
+  if (!discovered.wsPath) return true;
+  return configured.wsPath === discovered.wsPath;
 }
 
 async function discoverChromePort(mode = "user") {
@@ -105,17 +113,6 @@ async function discoverChromePort(mode = "user") {
         }
       }
     } catch {}
-  }
-
-  const fixedPorts = mode === "user" ? [9222, 9223, 9229, 9333] : [9222];
-  for (const port of fixedPorts) {
-    if (await checkPort(port)) {
-      const wsUrl = await fetchWebSocketUrl(port);
-      if (wsUrl) {
-        return { port, wsPath: new URL(wsUrl).pathname };
-      }
-      return { port, wsPath: null };
-    }
   }
 
   return null;
@@ -224,33 +221,29 @@ async function connect() {
   if (connectingPromise) return connectingPromise;
 
   if (!chromePort) {
-    // First, try to read pre-configured WebSocket URL from file
-    try {
-      if (fs.existsSync(WS_URL_FILE)) {
-        const content = fs.readFileSync(WS_URL_FILE, "utf-8").trim();
-        const match = content.match(/^ws_url:\s*(.+)$/);
-        if (match) {
-          const configuredUrl = match[1];
-          const urlMatch = configuredUrl.match(/ws:\/\/127\.0\.0\.1:(\d+)(.+)/);
-          if (urlMatch) {
-            chromePort = parseInt(urlMatch[1], 10);
-            chromeWsPath = configuredUrl;
-            return connectWithUrl(configuredUrl);
-          }
-        }
-      }
-    } catch {}
-
     const discovered = await discoverChromePort(BROWSER_MODE);
-    if (!discovered) {
+    if (discovered) {
+      chromePort = discovered.port;
+      chromeWsPath = discovered.wsPath;
+
+      const configured = BROWSER_MODE === "user" ? readConfiguredBrowserWsUrl() : null;
+      if (isConfiguredUrlCompatible(configured, discovered)) {
+        return connectWithUrl(configured.url);
+      }
+    } else {
+      const configured = BROWSER_MODE === "user" ? readConfiguredBrowserWsUrl() : null;
+      if (configured) {
+        chromePort = configured.port;
+        chromeWsPath = configured.wsPath;
+        return connectWithUrl(configured.url);
+      }
+
       throw new Error(
         BROWSER_MODE === "user"
           ? "Chrome remote debugging is not available. Enable it in your normal Chrome session first."
           : "Dedicated browser remote debugging is not available. Start the dedicated Brave instance first.",
       );
     }
-    chromePort = discovered.port;
-    chromeWsPath = discovered.wsPath;
   }
 
   const wsUrl = getWebSocketUrl(chromePort, chromeWsPath);

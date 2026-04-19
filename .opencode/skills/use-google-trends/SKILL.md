@@ -1,6 +1,9 @@
 ---
 name: use-google-trends
-description: Use Google Trends to compare keyword demand and capture top queries. Returns raw data with no forced conclusion.
+description: Use this skill ONLY when comparing 2-5 keywords simultaneously on Google Trends and extracting Rising Queries / Top Queries for each term. DO NOT use this skill for:
+- Single keyword trend lookup (use web-access directly instead)
+- General Google Trends browsing
+- Any task not requiring multi-keyword comparison
 ---
 
 # Check Google Trends
@@ -45,4 +48,4 @@ printf '%s' '{"keywords":["<keyword1>","<keyword2>"],"geo":"US","date":"today 12
 ## Notes
 
 - Average interest is relative, not absolute search volume.
-- Prefer this for raw comparison and language discovery, not final SEO judgment by itself.
+

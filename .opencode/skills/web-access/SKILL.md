@@ -278,6 +278,41 @@ curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
 - 写子 agent prompt 时只描述目标，不要过度规定步骤，避免把子 agent 锚定到错误工具
 - 并行 CDP 操作默认共享同一个浏览器实例和 proxy，但每个子 agent 必须只操作自己创建的 tab，并在结束后关闭
 
+## 站点经验
+
+对已经接触过的网站，优先复用已有经验，不要每次都从零试错。
+
+- 站点经验按域名存放在 `.opencode/skills/web-access/references/site-patterns/`
+- 确定目标网站后，先检查是否已有对应经验；如果不确定域名或用户只说了站点名，可先运行：
+
+```bash
+node .opencode/skills/web-access/scripts/match-site.mjs "用户输入或目标站点描述"
+```
+
+- 匹配到经验文件时，先读取对应文件，再开始 CDP 操作
+- 经验是先验提示，不是绝对真理；如果按经验失败，要回退到通用模式重新判断
+- 一次任务里验证出新的稳定规律后，主动补充到对应站点经验文件，方便后续复用
+
+文件格式：
+
+```markdown
+---
+domain: example.com
+aliases: [示例站, Example]
+updated: 2026-04-18
+---
+## 平台特征
+记录架构、反爬、登录需求、内容加载方式等已验证事实
+
+## 有效模式
+记录已验证可行的 URL 结构、操作策略、关键选择器
+
+## 已知陷阱
+记录哪些方式会失败，以及失败原因
+```
+
+只记录验证过的事实和模式，不写猜测。
+
 ## 媒体资源提取
 
 判断内容在图片里时，必须先用 `/eval` 判断图片在页面中的位置、所在容器、是否是当前可见帧，以及它和相邻文字、按钮、卡片的关系，再决定取哪张图。
@@ -304,6 +339,13 @@ curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
 | `attach 失败` | targetId 无效或 tab 已关闭 | 用 `/targets` 获取最新列表 |
 | `CDP 命令超时` | 页面长时间未响应 | 重试或检查 tab 状态 |
 | `端口已被占用` | 另一个 proxy 已在运行 | 已有实例可直接复用 |
+
+## 参考资料
+
+| 文件 | 何时使用 |
+|------|----------|
+| `.opencode/skills/web-access/references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验 |
+| `.opencode/skills/web-access/scripts/match-site.mjs` | 用户只给站点名、品牌名或模糊描述时，用来匹配经验文件 |
 
 ## 登录判断
 

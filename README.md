@@ -21,6 +21,7 @@ OpenCode workspace with local skills, local notes, and an optional Telegram brid
 - `.opencode/skills/learn-seo` for learning durable Web.Cafe methodology into notes
 - `.opencode/skills/refine-web-cafe-notes` for consolidating `notes/webcafe.md`
 - `.opencode/skills/keyword-research` for writing durable keyword memos to `notes/keyword-research.md`
+- `.opencode/skills/validate-keyword` for deciding whether a keyword is worth building around and whether it has commercial value
 - `.opencode/skills/google-drive-backup` for uploading the local `notes/` directory to Google Drive with timestamped snapshots
 
 ## Requirements
@@ -28,7 +29,6 @@ OpenCode workspace with local skills, local notes, and an optional Telegram brid
 - Node.js 22+
 - `uv` / `uvx` available on PATH for the local `seo-mcp` server
 - local sibling repo at `../seo-mcp`
-- Google Chrome available locally if you want to use `chrome-devtools-mcp`
 
 ## Modes
 
@@ -47,7 +47,6 @@ This mode uses:
 - `AGENTS.md`
 - `.opencode/skills/*`
 - `notes/*`
-- local `chrome-devtools` MCP
 - local `seo` MCP
 
 You do not need `.env` for this mode unless a skill or MCP dependency needs secrets like `CAPSOLVER_API_KEY`.
@@ -94,7 +93,7 @@ npm run dev
 
 ## Sitemap Monitor
 
-- Fixed watchlist lives in `notes/sitemap-watchlist.csv` with header `site,sitemap_url`.
+- Fixed watchlist lives in `notes/website-watchlist.csv` with header `site,sitemap_url`.
 - Results are written to `notes/sitemap-slugs/<site>.csv` with header `site,slug,first_seen_at`.
 - Each site keeps its own CSV file, with newest discovered rows first.
 - The monitor tries direct fetch first and falls back to the local browser CDP path when direct fetch is blocked.
@@ -124,10 +123,7 @@ npm run monitor:sitemaps -- --target dashmetry=https://dashmetry.com/sitemap.xml
 
 ## MCP
 
-- `opencode.json` configures local `chrome-devtools` and `seo` MCP servers.
-- `scripts/run-chrome-devtools-mcp.sh` starts `chrome-devtools-mcp` through `npx`.
-- By default it uses `--autoConnect --channel stable`.
-- You can override the launch flags with `CHROME_DEVTOOLS_MCP_ARGS`, for example `CHROME_DEVTOOLS_MCP_ARGS="--isolated --channel canary"`.
+- `opencode.json` configures the local `seo` MCP server.
 - The launcher script `scripts/run-seo-mcp.sh` reads `.env` and starts `seo-mcp` via `uvx`.
 - It is pinned to the sibling local repo at `../seo-mcp`.
 - `CAPSOLVER_API_KEY` is injected through the launcher script: `run-seo-mcp.sh` sources `.env` with `set -a`, exports the variables into the shell environment, and then `uvx` passes that environment through to the `seo-mcp` process.

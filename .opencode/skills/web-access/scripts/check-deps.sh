@@ -109,7 +109,6 @@ function activePortFiles() {
 }
 
 const BROWSER_MODE = '$mode';
-const fixedPorts = BROWSER_MODE === 'user' ? [9222, 9229, 9333] : [9222];
 
 async function main() {
   for (const filePath of activePortFiles()) {
@@ -123,13 +122,6 @@ async function main() {
         }
       }
     } catch (_) {}
-  }
-
-  for (const port of fixedPorts) {
-    if (await checkPort(port)) {
-      console.log(port);
-      process.exit(0);
-    }
   }
 
   process.exit(1);
@@ -161,7 +153,8 @@ HEALTH=$(curl -s --connect-timeout 3 "http://127.0.0.1:3456/health" 2>/dev/null 
 case "$HEALTH" in
   *'"ok"'* )
     if printf '%s' "$HEALTH" | grep -Fq '"browserMode":"'$BROWSER_MODE'"' &&
-       printf '%s' "$HEALTH" | grep -Fq '"chromePort":'$CHROME_PORT; then
+       printf '%s' "$HEALTH" | grep -Fq '"chromePort":'$CHROME_PORT &&
+       printf '%s' "$HEALTH" | grep -Fq '"connected":true'; then
       echo "proxy: ready"
       exit 0
     fi
@@ -180,8 +173,12 @@ while [ "$i" -le 15 ]; do
   HEALTH=$(curl -s --connect-timeout 5 --max-time 8 "http://127.0.0.1:3456/health" 2>/dev/null || true)
   case "$HEALTH" in
     *'"ok"'* )
-      echo "proxy: ready"
-      exit 0
+      if printf '%s' "$HEALTH" | grep -Fq '"browserMode":"'$BROWSER_MODE'"' &&
+         printf '%s' "$HEALTH" | grep -Fq '"chromePort":'$CHROME_PORT &&
+         printf '%s' "$HEALTH" | grep -Fq '"connected":true'; then
+        echo "proxy: ready"
+        exit 0
+      fi
       ;;
   esac
 
