@@ -29,7 +29,7 @@ const DEFAULT_MIN_VOLUME = 1000;
 const DEFAULT_MAX_KD = 40;
 const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_OUTPUT_DIR = "notes/keywords";
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEB_ACCESS_CHECK_SCRIPT = path.join(
   REPO_ROOT,
   ".opencode/skills/web-access/scripts/check-deps.sh",

@@ -106,7 +106,7 @@ If the type is unclear, ask one short clarification question instead of guessing
 
 ## Available CLI Tools
 
-There are ready-to-run scripts in `.src/scripts/`. Always prefer them over writing ad-hoc code for the same task.
+There are ready-to-run scripts in `scripts/`. Always prefer them over writing ad-hoc code for the same task.
 
 ---
 
@@ -118,7 +118,7 @@ There are ready-to-run scripts in `.src/scripts/`. Always prefer them over writi
 
 **Do not use when**: User only wants to browse Semrush manually or view a specific custom URL (use web-access directly)  
 **Requires**: CDP proxy running (`check-deps.sh --browser dedicated`)  
-**Run**: `npx tsx src/scripts/semrush-export.ts <domain> [--db us] [--min-volume 1000] [--max-kd 40]`  
+**Run**: `npx tsx scripts/semrush-export.ts <domain> [--db us] [--min-volume 1000] [--max-kd 40]`  
 **Output**: `notes/keywords/<domain>-keywords-<db>-volume-<min>-plus-kd-0-<max>-<timestamp>.csv`  
 **Notes**: If Semrush shows login page, user must log in manually in the browser first
 
@@ -131,7 +131,7 @@ There are ready-to-run scripts in `.src/scripts/`. Always prefer them over writi
 - Running recurring monitoring (cron or manual) on a watchlist of sites  
 
 **Do not use when**: User just wants to fetch a sitemap once without tracking history (use web-access directly)  
-**Run**: `npx tsx src/scripts/sitemap-monitor.ts [--target site=https://example.com/sitemap.xml]`  
+**Run**: `npx tsx scripts/sitemap-monitor.ts [--target site=https://example.com/sitemap.xml]`  
 **Watchlist**: `notes/website-watchlist.csv` — add `site,sitemap_url` rows here for recurring targets  
 **Output**: `notes/sitemap-slugs/<site>.csv` (new slugs prepended, sorted by first_seen_at)  
 **Notes**: Falls back to CDP proxy automatically if direct fetch is blocked
@@ -145,7 +145,7 @@ There are ready-to-run scripts in `.src/scripts/`. Always prefer them over writi
 - Need a quick sortable commercial-opportunity score without doing live SERP checks  
 
 **Do not use when**: User needs `KGR`, `intitle`, or live competition validation; this script only scores `kdroi` from existing CSV columns  
-**Run**: `npx tsx src/scripts/calculate-kdroi.ts <keywords.csv>`  
+**Run**: `npx tsx scripts/calculate-kdroi.ts <keywords.csv>`  
 **Input columns**: `Search Volume`, `CPC`, `Keyword Difficulty`  
 **Output**: Updates the original CSV in place, adding or refreshing the `kdroi` column  
 **Notes**: Leaves `kdroi` blank when any required field is missing or `Keyword Difficulty <= 0`; keeps 2 decimal places

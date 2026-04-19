@@ -20,7 +20,7 @@ const DEFAULT_TOP_ROWS = 300;
 async function main(): Promise<void> {
   const inputPath = process.argv[2];
   if (!inputPath) {
-    throw new Error("Usage: npx tsx src/scripts/calculate-kdroi.ts <keywords.csv>");
+    throw new Error("Usage: npx tsx scripts/calculate-kdroi.ts <keywords.csv>");
   }
 
   await updateKdroi(inputPath, DEFAULT_PROCESSING_OPTIONS);
