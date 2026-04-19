@@ -1,9 +1,10 @@
 ---
 name: use-google-trends
-description: Use this skill ONLY when comparing 2-5 keywords simultaneously on Google Trends and extracting Rising Queries / Top Queries for each term. DO NOT use this skill for:
-- Single keyword trend lookup (use web-access directly instead)
-- General Google Trends browsing
-- Any task not requiring multi-keyword comparison
+description: >-
+  Use this skill ONLY when comparing 2-5 keywords simultaneously on Google
+  Trends and extracting Rising Queries / Top Queries for each term. Do not use
+  this skill for single keyword trend lookup, general Google Trends browsing,
+  or tasks that do not require multi-keyword comparison.
 ---
 
 # Check Google Trends
@@ -48,4 +49,3 @@ printf '%s' '{"keywords":["<keyword1>","<keyword2>"],"geo":"US","date":"today 12
 ## Notes
 
 - Average interest is relative, not absolute search volume.
-
