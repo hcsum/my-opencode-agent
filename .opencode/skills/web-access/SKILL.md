@@ -1,360 +1,349 @@
 ---
 name: web-access
-description: Full web access with browser CDP, dynamic pages, and login state. Use for real browsing, logged-in sites, and dynamic pages.
+license: MIT
+github: https://github.com/eze-is/web-access
+description:
+  所有联网操作必须通过此 skill 处理，包括：搜索、网页抓取、登录后操作、网络交互等。
+  触发场景：用户要求搜索信息、查看网页内容、访问需要登录的网站、操作网页界面、抓取社交媒体内容（小红书、微博、推特等）、读取动态渲染页面、以及任何需要真实浏览器环境的网络任务。
+metadata:
+  author: 一泽Eze
+  version: "2.6.0"
 ---
 
-# web-access
+# web-access Skill
 
 ## 前置检查
 
-在需要真实浏览器前，先运行：
+在开始联网操作前，先判断这次浏览器任务更适合哪种模式，并优先说明这条核心差异：
+
+- **主力浏览器**：可能需要用户人工确认远程调试授权；自动继承现有登录态、书签、插件。
+- **专用浏览器**：配置完成后日常运行通常不需要用户人工确认 debug access；与主力浏览器完全隔离。
+
+如果用户未明确指定，再进入浏览器模式引导。不能只让用户做二选一，必须先讲清差异、收益和代价。
+
+默认先运行自动检查命令（同时检查主力与专用 profile）：
 
 ```bash
-bash .opencode/skills/web-access/scripts/check-deps.sh
+node .opencode/skills/web-access/scripts/check-deps.mjs
 ```
 
-这个脚本会：
+自动检查行为：
 
-- 检查 Node.js
-- 检查 Chrome remote debugging 是否可连
-- 检查本地 CDP proxy 是否已就绪
-- 如果 proxy 未运行则自动启动
+- 若主力或专用任一可用：直接返回 ok，不询问。
+- 若主力和专用都可用：默认走专用浏览器。
+- 若都不可用：再进入浏览器模式引导询问用户。
 
-### 浏览器配置
+如果用户明确要用专用浏览器，先只问一次他要用哪个浏览器，然后把选择映射成稳定的 `browser-id`：
 
-web-access 不会自动抢占用户的日常浏览器。首次使用或检测不到浏览器时，需要用户先选择一个浏览器实例，然后由 agent 直接执行启动命令。
+| browser-id | 浏览器 App 名称 |
+|---|---|
+| `chrome` | `Google Chrome` |
+| `chrome-canary` | `Google Chrome Canary` |
+| `chromium` | `Chromium` |
+| `brave` | `Brave Browser` |
+| `edge` | `Microsoft Edge` |
+| `arc` | `Arc` |
 
-关键是让带 `remote debugging` 的浏览器实例保持运行，不是让启动它的终端窗口必须一直开着。
+确定 `browser-id` 后，专用浏览器启动命令固定为：
 
-- 前台启动时，终端会一直占着，直到浏览器退出
-- 后台启动时，命令可以立刻返回，但浏览器实例仍需继续运行
-- 只要浏览器实例还活着，agent 就能继续连接它的调试端口
-
-### 两种浏览器模式
-
-web-access 支持两种模式，**不会同时使用两个浏览器**：
-
-#### Dedicated Browser（默认）
-
-给 web-access 专门用的浏览器，推荐 **Brave**，使用 home 目录下的持久 profile 与主力浏览器隔离。
-
-**端口策略**：固定端口 `9222`，稳定可预测。
-
-**启动命令（macOS）**：
 ```bash
-open -na "Brave Browser" --args \
-  --remote-debugging-port=9222 \
-  --user-data-dir=~/.web-access/brave-profile
+open -na "<Browser App Name>" --args \
+  --remote-debugging-port=9333 \
+  --user-data-dir="$HOME/.web-access/<browser-id>-dedicated-profile"
 ```
 
-**Linux / Windows**：
+然后运行：
+
 ```bash
-# 直接执行浏览器可执行文件并追加参数
-/path/to/brave --remote-debugging-port=9222 --user-data-dir=~/.web-access/brave-profile
+node .opencode/skills/web-access/scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
 ```
 
-如果 `~/.web-access/brave-profile` 已存在，会复用这个 home 目录下的持久 profile 的登录态和设置。
+一旦已经选定专用浏览器，后续所有检查和连接都必须继续带上 `--browser dedicated --browser-id <browser-id>`，不要再运行默认检查命令，否则流程可能被带回主力浏览器路径。
 
-agent 默认使用此模式，不需要用户指定；除非用户明确要求主力浏览器，否则都应优先连接这个 home 目录下的持久 profile。
+补充约束：
 
-#### User Browser（需明确要求）
+- **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
+- 自动检查不做跨 session 偏好记忆；依据当前可用连接实时判断（主力 `DevToolsActivePort` + `~/.web-access/*-dedicated-profile`）。
 
-用户的日常主力浏览器，如 Chrome。agent 使用浏览器已有的登录态。
+检查通过后并必须在回复中向用户直接展示以下须知，再启动 CDP Proxy 执行操作：
 
-**端口策略**：通过 `DevToolsActivePort` 文件动态发现端口（不固定）。
-
-**设置步骤**：
-1. 打开 Chrome
-2. 地址栏输入 `chrome://inspect/#remote-debugging`
-3. 勾选 **"Allow remote debugging for this browser instance"**
-4. 页面会显示 `Server running at: 127.0.0.1:<端口>`
-
-**使用方式**：用户必须明确说"主力浏览器"、"用 Chrome"、"user browser"，agent 才会切换到此模式。
-
-agent 切换时执行：
-```bash
-BROWSER_MODE=user bash .opencode/skills/web-access/scripts/check-deps.sh
 ```
-
-### check-deps.sh 参数
-
-```bash
-check-deps.sh --browser dedicated  # 默认：专用浏览器模式（Brave，home 目录持久 profile，固定端口）
-check-deps.sh --browser user       # 用户浏览器模式（Chrome，DevToolsActivePort）
-check-deps.sh                      # 等同于 dedicated
-```
-
-### 模式切换规则
-
-| 用户说... | 模式 | 说明 |
-|-----------|------|------|
-| （没说） | `dedicated` | 默认，使用 home 目录持久 profile 的专用浏览器 |
-| "主力浏览器"、"Chrome"、"user browser" | `user` | Chrome 动态端口 |
-| "Brave"、"专用浏览器" | `dedicated` | Brave 固定端口，使用 home 目录持久 profile |
-| "换浏览器"、"换个浏览器" | 询问 | 让用户选择 |
-
-### 启动验证
-
-agent 启动浏览器后，等待 3 秒再验证：
-
-```bash
-sleep 3 && bash .opencode/skills/web-access/scripts/check-deps.sh
+温馨提示：部分站点对浏览器自动化操作检测严格，存在账号封禁风险。已内置防护措施但无法完全避免，Agent 继续操作即视为接受。
 ```
 
 ## 浏览哲学
 
-像人一样思考，围绕目标做判断，不机械执行步骤。
+**像人一样思考，兼顾高效与适应性的完成任务。**
 
-- 先定义成功标准
-- 选最可能直达目标的入口
-- 每一步根据结果调整策略
-- 达成目标后停止，不做多余操作
+执行任务时不会过度依赖固有印象所规划的步骤，而是带着目标进入，边看边判断，遇到阻碍就解决，发现内容不够就深入——全程围绕「我要达成什么」做决策。这个 skill 的所有行为都应遵循这个逻辑。
 
-## 工具选择
+**① 拿到请求** — 先明确用户要做什么，定义成功标准：什么算完成了？需要获取什么信息、执行什么操作、达到什么结果？这是后续所有判断的锚点。
 
-| 场景                                                           | 工具                  |
-| -------------------------------------------------------------- | --------------------- |
-| URL 已知，需要原始 HTML 源码（meta、JSON-LD 等结构化字段）       | **curl**               |
-| 非公开内容，或已知静态层无效的平台（小红书、微信公众号等）        | **CDP 浏览器**         |
-| 需要登录态、交互操作，或需要像人一样在浏览器内自由导航探索         | **CDP 浏览器**         |
+**② 选择起点** — 根据任务性质、平台特征、达成条件，选一个最可能直达的方式作为第一步去验证。一次成功当然最好；不成功则在③中调整。比如，需要操作页面、需要登录态、已知静态方式不可达的平台（小红书、微信公众号等）→ 直接 CDP
 
-**注意**：如果 WebSearch、WebFetch 等 headless 工具被网站的 anti-bot 机制拦截（如返回 403、验证码、空白内容等），应立即停止尝试并切换到 CDP 浏览器，不要反复重试。
+**③ 过程校验** — 每一步的结果都是证据，不只是成功或失败的二元信号。用结果对照①的成功标准，更新你对目标的判断：路径在推进吗？结果的整体面貌（质量、相关度、量级）是否指向目标可达？发现方向错了立即调整，不在同一个方式上反复重试——搜索没命中不等于"还没找对方法"，也可能是"目标不存在"；API 报错、页面缺少预期元素、重试无改善，都是在告诉你该重新评估方向。遇到弹窗、登录墙等障碍，判断它是否真的挡住了目标：挡住了就处理，没挡住就绕过——内容可能已在页面 DOM 中，交互只是展示手段。
 
-## CDP 使用方式
+**④ 完成判断** — 对照定义的任务成功标准，确认任务完成后才停止，但也不要过度操作，不为了"完整"而浪费代价。
 
-通过 `bash` 调 `curl` 请求本地 proxy：`http://localhost:3456`
+## 联网工具选择
 
-## 基础信息
+- **确保信息的真实性，一手信息优于二手信息**：搜索引擎和聚合平台是信息发现入口。当多次搜索尝试后没有质的改进时，升级到更根本的获取方式：定位一手来源（官网、官方平台、原始页面）。
 
-- 地址：`http://localhost:3456`
-- 启动：`node ~/.claude/skills/web-access/scripts/cdp-proxy.mjs &`
-- 启动后持续运行，不建议主动停止（重启需 Chrome 重新授权）
-- 强制停止：`pkill -f cdp-proxy.mjs`
+| 场景 | 工具 |
+|------|------|
+| 搜索摘要或关键词结果，发现信息来源 | **WebSearch** |
+| URL 已知，需要从页面定向提取特定信息 | **WebFetch**（拉取网页内容，由小模型根据 prompt 提取，返回处理后结果） |
+| URL 已知，需要原始 HTML 源码（meta、JSON-LD 等结构化字段） | **curl** |
+| 非公开内容，或已知静态层无效的平台（小红书、微信公众号等公开内容也被反爬限制） | **浏览器 CDP**（直接，跳过静态层） |
+| 需要登录态、交互操作，或需要像人一样在浏览器内自由导航探索 | **浏览器 CDP** |
 
-## API 端点
+浏览器 CDP 不要求 URL 已知——可从任意入口出发，通过页面内搜索、点击、跳转等方式找到目标内容。WebSearch、WebFetch、curl 均不处理登录态。
 
-### GET /health
+**Jina**（可选预处理层，可与 WebFetch/curl 组合使用，由于其特性可节省 tokens 消耗，请积极在任务合适时组合使用）：第三方网络服务，可将网页转为 Markdown，大幅节省 token 但可能有信息损耗。调用方式为 `r.jina.ai/example.com`（URL 前加前缀，不保留原网址 http 前缀），限 20 RPM。适合文章、博客、文档、PDF 等以正文为核心的页面；对数据面板、商品页等非文章结构页面可能提取到错误区块。
 
-健康检查，返回连接状态。
+进入浏览器层后，`/eval` 就是你的眼睛和手：
+
+- **看**：用 `/eval` 查询 DOM，发现页面上的链接、按钮、表单、文本内容——相当于「看看这个页面有什么」
+- **做**：用 `/click` 点击元素、`/scroll` 滚动加载、`/eval` 填表提交——像人一样在页面内自然导航
+- **读**：用 `/eval` 提取文字内容，判断图片/视频是否承载核心信息——是则提取媒体 URL 定向读取或 `/screenshot` 视觉识别
+
+浏览网页时，**先了解页面结构，再决定下一步动作**。不需要提前规划所有步骤。
+
+### 补充：本地 Chrome 资源
+
+用户指向**本人访问过的页面**（"我之前看的那个讲 X 的文章"、"上次打开过的 XX 面板"）或**组织内部系统**（"我们的 XX 平台"、"公司那个 YY 系统"等公网搜不到的目标）时，检索本地 Chrome 书签/历史：
 
 ```bash
-curl -s http://localhost:3456/health
+node .opencode/skills/web-access/scripts/find-url.mjs [关键词...] [--only bookmarks|history] [--limit N] [--since 1d|7h|YYYY-MM-DD] [--sort recent|visits]
 ```
 
-可用端点：
+关键词空格分词、多词 AND，匹配 title + url（可省略）；`--since` / `--sort` 仅作用于历史；默认按最近访问倒序，`--sort visits` 按访问次数排序（适合"高频访问的网站"这类场景）。
 
-- `GET /targets`
-- `GET /new?url=...`
-- `GET /close?target=ID`
-- `GET /navigate?target=ID&url=...`
-- `GET /back?target=ID`
-- `GET /info?target=ID`
-- `POST /eval?target=ID`
-- `POST /click?target=ID`
-- `POST /clickAt?target=ID`
-- `POST /setFiles?target=ID`
-- `GET /scroll?target=ID&y=3000`
-- `GET /scroll?target=ID&direction=bottom`
-- `GET /screenshot?target=ID&file=/tmp/shot.png`
+### 程序化操作与 GUI 交互
 
-### GET /targets
+浏览器内操作页面有两种方式：
 
-列出所有已打开的页面 tab。返回数组，每项含 `targetId`、`title`、`url`。
+- **程序化方式**（构造 URL 直接导航、eval 操作 DOM）：成功时速度快、精确，但对网站来说不是正常用户行为，可能触发反爬机制。
+- **GUI 交互**（点击按钮、填写输入框、滚动浏览）：GUI 是为人设计的，网站不会限制正常的 UI 操作，确定性最高，但步骤多、速度慢。
+
+根据对目标平台的了解来灵活选择方式。GUI 交互也是程序化方式的有效探测——通过一次真实交互观察站点的实际行为（URL 模式、必需参数、页面跳转逻辑），为后续程序化操作提供依据；同时当程序化方式受阻时，GUI 交互是可靠的兜底。
+
+**站点内交互产生的链接是可靠的**：通过用户视角中的可交互单元（卡片、条目、按钮）进行的站点内交互，自然到达的 URL 天然携带平台所需的完整上下文。而手动构造的 URL 可能缺失隐式必要参数，导致被拦截、返回错误页面、甚至触发反爬。
+
+## 浏览器模式引导
+
+在需要浏览器操作、且自动检查未检测到可用连接时，再进入浏览器模式引导。
+
+### 必须向用户提供以下选择说明:
+
+不能只说“选 1 还是 2”。必须先讲这条核心差异：
+
+- **是否需要人工确认调试授权**：主力浏览器可能需要；专用浏览器在配置完成后通常不需要。
+
+然后再补充：
+
+- **主力浏览器**：立即复用现有登录态；但与用户日常浏览不隔离。
+- **专用浏览器**：与日常浏览完全隔离，更适合长期稳定自动化；但首次需在专用 profile 重新登录和配置插件/书签。
+
+### 用户选择后的后续操作
+
+- 如果用户选择 **主力浏览器**：
+  - 让用户在 Chromium 系浏览器地址栏打开 `chrome://inspect/#remote-debugging`
+  - 勾选 **"Allow remote debugging for this browser instance"**
+  - 用户完成后，将后续参数设为：`--browser primary`
+
+- 如果用户选择 **专用浏览器**：
+  - 先询问用户希望使用哪个浏览器，不要直接假设。优先提供以下选项，并附带一个自由输入项：
+    - `Google Chrome`
+    - `Google Chrome Canary`
+    - `Chromium`
+    - `Brave Browser`
+    - `Microsoft Edge`
+    - `Arc`
+  - 把用户选择映射成对应 `browser-id`，然后返回固定启动命令，不要替用户执行启动。
+  - 用户确认已启动后，将后续参数设为：`--browser dedicated --browser-id <browser-id>`
+  - 进入专用浏览器路径后，后续检查、连接、排障都继续沿用这组 dedicated 参数，不要再退回默认检查命令
+
+补充约束：
+
+- 如果主力浏览器未连接，不要自动切换到专用浏览器路径；先明确告诉用户主力浏览器当前不可用，并让用户决定是开启主力浏览器远程调试，还是改用专用浏览器。
+- 只有在用户明确选择专用浏览器时，才进入专用浏览器的浏览器选择引导。
+
+## 浏览器 CDP 模式
+
+通过 CDP Proxy 连接浏览器，支持两种模式：
+
+- **主力浏览器**：连接平时主要使用的浏览器会话，天然携带现有登录态。
+- **专用浏览器**：连接一个使用独立 `user-data-dir` 启动的 Chromium 浏览器实例，和用户自己的浏览器操作隔离。
+
+若无用户明确要求，不主动操作用户已有 tab，所有操作都在自己创建的后台 tab 中进行，保持对用户环境的最小侵入。不关闭用户 tab 的前提下，完成任务后关闭自己创建的 tab，保持环境整洁。
+
+### 启动
+
+主力浏览器路径：
 
 ```bash
+node .opencode/skills/web-access/scripts/check-deps.mjs
+```
+
+专用浏览器路径：
+
+```bash
+node .opencode/skills/web-access/scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
+```
+
+脚本会依次检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。
+
+### Proxy API
+
+所有操作通过 curl 调用 HTTP API：
+
+```bash
+# 列出用户已打开的 tab
 curl -s http://localhost:3456/targets
-```
 
-### GET /new?url=URL
-
-创建新后台 tab，自动等待页面加载完成。返回 `{ targetId }`.
-
-```bash
+# 创建新后台 tab（自动等待加载）
 curl -s "http://localhost:3456/new?url=https://example.com"
-```
 
-### GET /close?target=ID
-
-关闭指定 tab。
-
-```bash
-curl -s "http://localhost:3456/close?target=TARGET_ID"
-```
-
-### GET /navigate?target=ID&url=URL
-
-在已有 tab 中导航到新 URL，自动等待加载。
-
-```bash
-curl -s "http://localhost:3456/navigate?target=ID&url=https://example.com"
-```
-
-### GET /back?target=ID
-
-后退一页。
-
-```bash
-curl -s "http://localhost:3456/back?target=ID"
-```
-
-### GET /info?target=ID
-
-获取页面基础信息（title、url、readyState）。
-
-```bash
+# 页面信息
 curl -s "http://localhost:3456/info?target=ID"
-```
 
-### POST /eval?target=ID
-
-执行 JavaScript 表达式，POST body 为 JS 代码。
-
-```bash
+# 执行任意 JS：可读写 DOM、提取数据、操控元素、触发状态变更、提交表单、调用内部方法
 curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'document.title'
-```
 
-### POST /click?target=ID
+# 捕获页面渲染状态（含视频当前帧）
+curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
 
-JS 层面点击（`el.click()`），POST body 为 CSS 选择器。自动 scrollIntoView 后点击。简单快速，覆盖大多数场景。
+# 导航、后退
+curl -s "http://localhost:3456/navigate?target=ID&url=URL"
+curl -s "http://localhost:3456/back?target=ID"
 
-```bash
+# 点击（POST body 为 CSS 选择器）— JS el.click()，简单快速，覆盖大多数场景
 curl -s -X POST "http://localhost:3456/click?target=ID" -d 'button.submit'
-```
 
-### POST /clickAt?target=ID
-
-CDP 浏览器级真实鼠标点击（`Input.dispatchMouseEvent`），POST body 为 CSS 选择器。先获取元素坐标，再模拟鼠标按下/释放。算真实用户手势，能触发文件对话框、绕过部分反自动化检测。
-
-```bash
+# 真实鼠标点击 — CDP Input.dispatchMouseEvent，算用户手势，能触发文件对话框
 curl -s -X POST "http://localhost:3456/clickAt?target=ID" -d 'button.upload'
-```
 
-### POST /setFiles?target=ID
+# 文件上传 — 直接设置 file input 的本地文件路径，绕过文件对话框
+curl -s -X POST "http://localhost:3456/setFiles?target=ID" -d '{"selector":"input[type=file]","files":["/path/to/file.png"]}'
 
-给 file input 设置本地文件路径（`DOM.setFileInputFiles`），完全绕过文件对话框。POST body 为 JSON。
-
-```bash
-curl -s -X POST "http://localhost:3456/setFiles?target=ID" -d '{"selector":"input[type=file]","files":["/path/to/file1.png","/path/to/file2.png"]}'
-```
-
-### GET /scroll?target=ID&y=3000&direction=down
-
-滚动页面。`direction` 可选 `down`（默认）、`up`、`top`、`bottom`。滚动后自动等待 800ms 供懒加载触发。
-
-```bash
+# 滚动（触发懒加载）
 curl -s "http://localhost:3456/scroll?target=ID&y=3000"
 curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"
+
+# 关闭 tab
+curl -s "http://localhost:3456/close?target=ID"
 ```
 
-### GET /screenshot?target=ID&file=/tmp/shot.png
+### 页面内导航
 
-截图。指定 `file` 参数保存到本地文件；不指定则返回图片二进制。可选 `format=jpeg`。
+两种方式打开页面内的链接：
 
-```bash
-curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
-```
+- **`/click`**：在当前 tab 内直接点击用户视角中的可交互单元，简单直接，串行处理。适合需要在同一页面内连续操作的场景，如点击展开、翻页、进入详情等。
+- **`/new` + 完整 URL**：使用目标链接的完整地址（包含所有URL参数），在新 tab 中打开。适合需要同时访问多个页面的场景。
 
-## /eval 使用提示
+很多网站的链接包含会话相关的参数（如 token），这些参数是正常访问所必需的。提取 URL 时应保留完整地址，不要裁剪或省略参数。
 
-- POST body 为任意 JS 表达式，返回 `{ value }` 或 `{ error }`
-- 支持 `awaitPromise`：可以写 async 表达式
-- 返回值必须是可序列化的（字符串、数字、对象），DOM 节点不能直接返回，需要提取属性
-- 提取大量数据时用 `JSON.stringify()` 包裹，确保返回字符串
-- 根据页面实际 DOM 结构编写选择器，不要套用固定模板
+### 媒体资源提取
 
-## 页面操作原则
+判断内容在图片里时，用 `/eval` 从 DOM 直接拿图片 URL，再定向读取——比全页截图精准得多。
 
-- 默认只操作自己创建的后台 tab
-- 不主动干扰用户现有 tab
-- 结束后关闭自己创建的 tab
-- 若内容拿不到，再判断是否需要用户先登录站点
+### 技术事实
+
+- 页面中存在大量已加载但未展示的内容——轮播中非当前帧的图片、折叠区块的文字、懒加载占位元素等，它们存在于 DOM 中但对用户不可见。以数据结构（容器、属性、节点关系）为单位思考，可以直接触达这些内容。
+- DOM 中存在选择器不可跨越的边界（Shadow DOM 的 `shadowRoot`、iframe 的 `contentDocument`等）。eval 递归遍历可一次穿透所有层级，返回带标签的结构化内容，适合快速了解未知页面的完整结构。
+- `/scroll` 到底部会触发懒加载，使未进入视口的图片完成加载。提取图片 URL 前若未滚动，部分图片可能尚未加载。
+- 拿到媒体资源 URL 后，公开资源可直接下载到本地后用读取；需要登录态才可获取的资源才需要在浏览器内 navigate + screenshot。
+- 短时间内密集打开大量页面（如批量 `/new`）可能触发网站的反爬风控。
+- 平台返回的"内容不存在""页面不见了"等提示不一定反映真实状态，也可能是访问方式的问题（如 URL 缺失必要参数、触发反爬）而非内容本身的问题。
+
+### 视频内容获取
+
+浏览器真实渲染，截图可捕获当前视频帧。核心能力：通过 `/eval` 操控 `<video>` 元素（获取时长、seek 到任意时间点、播放/暂停/全屏），配合 `/screenshot` 采帧，可对视频内容进行离散采样分析。
+
+### 登录判断
+
+主力浏览器通常天然携带现有登录态，大多数常用网站已登录。专用浏览器则需要用户在对应 profile 中单独完成一次登录。
+
+登录判断的核心问题只有一个：**目标内容拿到了吗？**
+
+打开页面后先尝试获取目标内容。只有当确认**目标内容无法获取**且判断登录能解决时，才告知用户：
+> "当前页面在未登录状态下无法获取[具体内容]，请在当前使用的浏览器中登录 [网站名]，完成后告诉我继续。"
+
+登录完成后无需重启任何东西，直接刷新页面继续。若使用专用浏览器，后续同一 profile 会保留该登录态。
+
+### 任务结束
+
+用 `/close` 关闭自己创建的 tab，必须保留用户原有的 tab 不受影响。
+
+Proxy 持续运行，不建议主动停止——重启后需要在浏览器中重新授权 CDP 连接。
 
 ## 并行调研：子 Agent 分治策略
 
-任务包含多个彼此独立的调研目标时，优先考虑把它们拆给子 agent 并行执行，而不是由主 agent 串行处理。
+任务包含多个**独立**调研目标时（如同时调研 N 个项目、N 个来源），鼓励合理分治给子 Agent 并行执行，而非主 Agent 串行处理。
 
-- 适合分治：目标互不依赖、每个子任务都足够重、需要 CDP 浏览器或较长交互流程
-- 不适合分治：任务有前后依赖、只是简单单页查询、几次搜索或抓取就能完成
-- 写子 agent prompt 时只描述目标，不要过度规定步骤，避免把子 agent 锚定到错误工具
-- 并行 CDP 操作默认共享同一个浏览器实例和 proxy，但每个子 agent 必须只操作自己创建的 tab，并在结束后关闭
+**好处：**
+- **速度**：多子 Agent 并行，总耗时约等于单个子任务时长
+- **上下文保护**：抓取内容不进入主 Agent 上下文，主 Agent 只接收摘要，节省 token
+
+**并行 CDP 操作**：每个子 Agent 在当前浏览器实例中，自行创建所需的后台 tab（`/new`），自行操作，任务结束自行关闭（`/close`）。所有子 Agent 共享一个 Chromium 浏览器实例和一个 Proxy，通过不同 targetId 操作不同 tab，无竞态风险。
+
+**子 Agent Prompt 写法：目标导向，而非步骤指令**
+- 必须在子 Agent prompt 中写 `必须加载 web-access skill 并遵循指引`，子 Agent 会自动加载 skill，无需在 prompt 中复制 skill 内容或指定路径。
+- 子 Agent 有自主判断能力。主 Agent 的职责是说清楚**要什么**，仅在必要与确信时限定**怎么做**。过度指定步骤会剥夺子 Agent 的判断空间，反而引入主 Agent 的假设错误。**避免 prompt 用词对子 Agent 行为的暗示**：「搜索xx」会把子 Agent 锚定到 WebSearch，而实际上有些反爬站点需要 CDP 直接访问主站才能有效获取内容。主 Agent 写 prompt 时应描述目标（「获取」「调研」「了解」），避免用暗示具体手段的动词（「搜索」「抓取」「爬取」）。
+
+**分治判断标准：**
+
+| 适合分治 | 不适合分治 |
+|----------|-----------|
+| 目标相互独立，结果互不依赖 | 目标有依赖关系，下一个需要上一个的结果 |
+| 每个子任务量足够大（多页抓取、多轮搜索） | 简单单页查询，分治开销大于收益 |
+| 需要 CDP 浏览器或长时间运行的任务 | 几次 WebSearch / Jina 就能完成的轻量查询 |
+
+## 信息核实类任务
+
+核实的目标是**一手来源**，而非更多的二手报道。多个媒体引用同一个错误会造成循环印证假象。
+
+搜索引擎和聚合平台是信息发现入口，是**定位**信息的工具，不可用于直接**证明**真伪。找到来源后，直接访问读取原文。同一原则适用于工具能力/用法的调研——官方文档是一手来源，不确定时先查文档或源码，不猜测。
+
+| 信息类型 | 一手来源 |
+|----------|---------|
+| 政策/法规 | 发布机构官网 |
+| 企业公告 | 公司官方新闻页 |
+| 学术声明 | 原始论文/机构官网 |
+| 工具能力/用法 | 官方文档、源码 |
+
+**找不到官网时**：权威媒体的原创报道（非转载）可作为次级依据，但需向用户说明："未找到官方原文，以下核实来自[媒体名]报道，存在转述误差可能。"单一来源时同样向用户声明。
 
 ## 站点经验
 
-对已经接触过的网站，优先复用已有经验，不要每次都从零试错。
+操作中积累的特定网站经验，按域名存储在 `references/site-patterns/` 下。
 
-- 站点经验按域名存放在 `.opencode/skills/web-access/references/site-patterns/`
-- 确定目标网站后，先检查是否已有对应经验；如果不确定域名或用户只说了站点名，可先运行：
+确定目标网站后，如果前置检查输出的 site-patterns 列表中有匹配的站点，必须读取对应文件获取先验知识（平台特征、有效模式、已知陷阱）。经验内容标注了发现日期，当作可能有效的提示而非保证——如果按经验操作失败，回退通用模式并更新经验文件。
 
-```bash
-node .opencode/skills/web-access/scripts/match-site.mjs "用户输入或目标站点描述"
-```
-
-- 匹配到经验文件时，先读取对应文件，再开始 CDP 操作
-- 经验是先验提示，不是绝对真理；如果按经验失败，要回退到通用模式重新判断
-- 一次任务里验证出新的稳定规律后，主动补充到对应站点经验文件，方便后续复用
+CDP 操作成功完成后，如果发现了有必要记录经验的新站点或新模式（URL 结构、平台特征、操作策略），主动写入对应的站点经验文件。只写经过验证的事实，不写未确认的猜测。
 
 文件格式：
-
 ```markdown
 ---
 domain: example.com
-aliases: [示例站, Example]
-updated: 2026-04-18
+aliases: [示例, Example]
+updated: 2026-03-19
 ---
 ## 平台特征
-记录架构、反爬、登录需求、内容加载方式等已验证事实
+架构、反爬行为、登录需求、内容加载方式等事实
 
 ## 有效模式
-记录已验证可行的 URL 结构、操作策略、关键选择器
+已验证的 URL 模式、操作策略、选择器
 
 ## 已知陷阱
-记录哪些方式会失败，以及失败原因
+什么会失败以及为什么
 ```
+经验/陷阱内容标注发现日期，当作"可能有效的提示"而非"保证正确的事实"。
 
-只记录验证过的事实和模式，不写猜测。
+## References 索引
 
-## 媒体资源提取
-
-判断内容在图片里时，必须先用 `/eval` 判断图片在页面中的位置、所在容器、是否是当前可见帧，以及它和相邻文字、按钮、卡片的关系，再决定取哪张图。
-
-在确认目标图片后，再用 `/eval` 从 DOM 直接拿图片 URL，再定向读取，比全页截图精准得多。
-
-## 技术事实
-
-- 页面中存在大量已加载但未展示的内容，轮播中非当前帧的图片、折叠区块的文字、懒加载占位元素等，都可能已经存在于 DOM 中但对用户不可见。以数据结构、属性和节点关系为单位思考，可以直接触达这些内容。
-- DOM 中存在选择器不可跨越的边界，例如 Shadow DOM 的 `shadowRoot`、iframe 的 `contentDocument`。`/eval` 递归遍历可以一次穿透这些层级，适合快速了解未知页面的完整结构。
-- `/scroll` 到底部会触发懒加载，使未进入视口的图片完成加载。提取图片 URL 前若未滚动，部分图片可能尚未加载。
-- 拿到媒体资源 URL 后，公开资源可直接下载到本地再读取；只有必须依赖登录态的资源，才优先考虑在浏览器内 `navigate` 加 `screenshot`。
-- 短时间内密集打开大量页面，例如批量 `/new`，可能触发网站的反爬风控。
-- 平台返回的“内容不存在”“页面不见了”等提示不一定反映真实状态，也可能是访问方式的问题，例如 URL 缺失必要参数或触发反爬，而不是内容本身真的不存在。
-- 某些网站会主动探测本机常见调试端口，用来判断当前浏览器是否开启了自动化调试
-- proxy 已拦截页面对当前 CDP 调试端口的本地请求，降低这类前端探测直接命中的概率
-- 这个拦截只针对当前调试端口的 `127.0.0.1` 和 `localhost` 请求，不影响普通网页访问
-
-## 错误处理
-
-| 错误 | 原因 | 解决 |
-|------|------|------|
-| `Chrome 未开启远程调试端口` | Chrome 未开启远程调试 | 提示用户打开 `chrome://inspect/#remote-debugging` 并勾选 Allow |
-| `attach 失败` | targetId 无效或 tab 已关闭 | 用 `/targets` 获取最新列表 |
-| `CDP 命令超时` | 页面长时间未响应 | 重试或检查 tab 状态 |
-| `端口已被占用` | 另一个 proxy 已在运行 | 已有实例可直接复用 |
-
-## 参考资料
-
-| 文件 | 何时使用 |
-|------|----------|
-| `.opencode/skills/web-access/references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验 |
-| `.opencode/skills/web-access/scripts/match-site.mjs` | 用户只给站点名、品牌名或模糊描述时，用来匹配经验文件 |
-
-## 登录判断
-
-先尝试获取目标内容。只有在明确判断登录能解决问题时，才让用户去浏览器完成登录。
-
-## 任务结束
-
-任务结束后关闭自己创建的 tab：
-
-```bash
-curl -s "http://localhost:3456/close?target=TARGET_ID"
-```
+| 文件 | 何时加载 |
+|------|---------|
+| `references/cdp-api.md` | 需要 CDP API 详细参考、JS 提取模式、错误处理时 |
+| `references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验 |

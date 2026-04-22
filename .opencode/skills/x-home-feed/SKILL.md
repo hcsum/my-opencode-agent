@@ -35,7 +35,9 @@ Default to a numbered list with moderate detail.
 - Each item can be 2-3 sentences when needed.
 - Prefer 4-7 items total.
 - Put the main signal first and lower-signal items later.
-- Keep citations inline only when they materially help, for example a handle or product name.
+- When you mention a representative post or account, include the original post URL.
+- Prefer inline links in the same bullet so the source is immediately visible.
+- Keep citations inline only when they materially help, for example a handle, product name, or original post link.
 - Prefer grouping similar posts under a shared theme instead of giving each post its own mini-summary.
 - When useful, classify signals by recommendation level first, then summarize within each bucket.
 

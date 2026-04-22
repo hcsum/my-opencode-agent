@@ -13,7 +13,7 @@ bash .opencode/skills/web-access/scripts/check-deps.sh
 
 Then visit: https://sem.3ue.co/home
 
-Confirm if the website open correctly. If you got redirected to the login page, ask the user to log in and confirm when done before continuing. 
+**IMPORTANT**: Confirm if the website open correctly. If you got redirected to the login page, find credentials from `notes/semrush-credentials.md` and log in manually. After successful login, click "打开" to enter the main dashboard. Only after you can see the dashboard, the skill is ready to use. If you cannot log in successfully, stop and report the issue.
 
 ## Known URL Formats
 
@@ -33,3 +33,7 @@ Backlink list can be filtered and sorted by metrics such as authority score, tra
 ## Data Export
 
 Data from Semrush can be exported as CSV files. Look for a button called "导出", click it, and then choose "CSV" format to download the data. The exported CSV files can be found in the default download folder of the system, usually `~/Downloads`. File name usually contains the keyword or domain name and the date of export.
+
+## Data fetch rules
+
+- For search volume, take "Global Volume" (全球搜索量) instead of "Volume" (搜索量) unless user specifies otherwise.

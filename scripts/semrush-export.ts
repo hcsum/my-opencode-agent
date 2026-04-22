@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_PROCESSING_OPTIONS, updateKdroi } from "./calculate-kdroi.js";
 
 type CliOptions = {
   site: string;
@@ -29,6 +28,19 @@ const DEFAULT_MIN_VOLUME = 1000;
 const DEFAULT_MAX_KD = 40;
 const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_OUTPUT_DIR = "notes/keywords";
+const OUTPUT_DECIMALS = 2;
+const DEFAULT_COLUMNS_TO_REMOVE = [
+  "Previous position",
+  "Traffic Cost",
+  "Competition",
+  "Number of Results",
+  "Trends",
+  "Timestamp",
+  "SERP Features by Keyword",
+  "Keyword Intents",
+  "Position Type",
+];
+const DEFAULT_TOP_ROWS = 300;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEB_ACCESS_CHECK_SCRIPT = path.join(
   REPO_ROOT,
@@ -68,7 +80,7 @@ async function main(): Promise<void> {
       minVolume: options.minVolume,
       maxKd: options.maxKd,
     });
-    await updateKdroi(finalPath, DEFAULT_PROCESSING_OPTIONS);
+    await postProcessExportedCsv(finalPath);
 
     console.log(finalPath);
   } finally {
@@ -553,6 +565,225 @@ async function getAvailablePath(filePath: string): Promise<string> {
   }
 
   throw new Error(`无法找到可用文件名: ${filePath}`);
+}
+
+async function postProcessExportedCsv(inputPath: string): Promise<void> {
+  const resolvedPath = path.resolve(inputPath);
+  const raw = await fs.readFile(resolvedPath, "utf8");
+  const rows = parseCsv(raw);
+
+  if (rows.length === 0) {
+    throw new Error(`CSV is empty: ${resolvedPath}`);
+  }
+
+  const [header, ...body] = rows;
+  removeColumnsFromRows(header, body, DEFAULT_COLUMNS_TO_REMOVE);
+
+  const volumeIndex = header.indexOf("Search Volume");
+  const cpcIndex = header.indexOf("CPC");
+  const kdIndex = header.indexOf("Keyword Difficulty");
+  const keywordIndex = header.indexOf("Keyword");
+
+  if (volumeIndex === -1 || cpcIndex === -1 || kdIndex === -1 || keywordIndex === -1) {
+    throw new Error(
+      'CSV must include columns: "Keyword", "Search Volume", "CPC", and "Keyword Difficulty"',
+    );
+  }
+
+  let kdroiIndex = header.indexOf("kdroi");
+  if (kdroiIndex === -1) {
+    header.push("kdroi");
+    kdroiIndex = header.length - 1;
+  }
+
+  for (const row of body) {
+    while (row.length < header.length) {
+      row.push("");
+    }
+
+    const searchVolume = parseNumber(row[volumeIndex]);
+    const cpc = parseNumber(row[cpcIndex]);
+    const keywordDifficulty = parseNumber(row[kdIndex]);
+
+    row[kdroiIndex] = formatKdroi(searchVolume, cpc, keywordDifficulty);
+  }
+
+  sortRowsByVolume(body, volumeIndex, kdroiIndex);
+  dedupeRowsByKeyword(body, keywordIndex);
+
+  if (body.length > DEFAULT_TOP_ROWS) {
+    body.splice(DEFAULT_TOP_ROWS);
+  }
+
+  const output = [header, ...body].map(formatCsvRow).join("\n");
+  await fs.writeFile(resolvedPath, `${output}\n`, "utf8");
+}
+
+function removeColumnsFromRows(header: string[], body: string[][], columnsToRemove: string[]): void {
+  const removeIndexes = columnsToRemove
+    .map((column) => header.indexOf(column))
+    .filter((index) => index >= 0)
+    .sort((left, right) => right - left);
+
+  for (const index of removeIndexes) {
+    header.splice(index, 1);
+    for (const row of body) {
+      if (index < row.length) {
+        row.splice(index, 1);
+      }
+    }
+  }
+}
+
+function formatKdroi(searchVolume: number | null, cpc: number | null, kd: number | null): string {
+  if (searchVolume == null || cpc == null || kd == null || kd <= 0) {
+    return "";
+  }
+
+  return ((searchVolume * cpc) / kd).toFixed(OUTPUT_DECIMALS);
+}
+
+function sortRowsByVolume(body: string[][], volumeIndex: number, kdroiIndex: number): void {
+  body.sort((left, right) => {
+    const byVolume = compareNumbersDesc(left[volumeIndex], right[volumeIndex]);
+    if (byVolume !== 0) {
+      return byVolume;
+    }
+
+    return compareKdroi(right[kdroiIndex], left[kdroiIndex]);
+  });
+}
+
+function dedupeRowsByKeyword(body: string[][], keywordIndex: number): void {
+  const seen = new Set<string>();
+
+  for (let index = body.length - 1; index >= 0; index -= 1) {
+    const keyword = body[index]?.[keywordIndex]?.trim().toLowerCase();
+    if (!keyword) {
+      continue;
+    }
+
+    if (seen.has(keyword)) {
+      body.splice(index, 1);
+      continue;
+    }
+
+    seen.add(keyword);
+  }
+}
+
+function compareKdroi(left: string | undefined, right: string | undefined): number {
+  const leftValue = parseNumber(left);
+  const rightValue = parseNumber(right);
+
+  if (leftValue == null && rightValue == null) {
+    return 0;
+  }
+  if (leftValue == null) {
+    return -1;
+  }
+  if (rightValue == null) {
+    return 1;
+  }
+
+  return leftValue - rightValue;
+}
+
+function compareNumbersDesc(left: string | undefined, right: string | undefined): number {
+  const leftValue = parseNumber(left);
+  const rightValue = parseNumber(right);
+
+  if (leftValue == null && rightValue == null) {
+    return 0;
+  }
+  if (leftValue == null) {
+    return 1;
+  }
+  if (rightValue == null) {
+    return -1;
+  }
+
+  return rightValue - leftValue;
+}
+
+function parseNumber(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/,/g, "").trim();
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseCsv(raw: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    const nextChar = raw[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentCell += '"';
+        index += 1;
+        continue;
+      }
+
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      currentRow.push(currentCell);
+      currentCell = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && nextChar === "\n") {
+        index += 1;
+      }
+
+      currentRow.push(currentCell);
+      rows.push(currentRow);
+      currentRow = [];
+      currentCell = "";
+      continue;
+    }
+
+    currentCell += char;
+  }
+
+  if (currentCell.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentCell);
+    rows.push(currentRow);
+  }
+
+  while (rows.length > 0 && rows[rows.length - 1].every((cell) => cell.length === 0)) {
+    rows.pop();
+  }
+
+  return rows;
+}
+
+function formatCsvRow(values: string[]): string {
+  return values.map(formatCsvCell).join(",");
+}
+
+function formatCsvCell(value: string): string {
+  if (/[",\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+
+  return value;
 }
 
 function formatTimestamp(date: Date): string {
