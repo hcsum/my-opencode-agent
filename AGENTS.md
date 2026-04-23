@@ -148,6 +148,6 @@ There are ready-to-run scripts in `scripts/`. Always prefer them over writing ad
 
 **Do not use when**: User just wants to fetch a sitemap once without tracking history (use web-access directly)  
 **Run**: `npx tsx scripts/sitemap-monitor.ts [--target site=https://example.com/sitemap.xml]`  
-**Watchlist**: `notes/website-watchlist.csv` — add `site,sitemap_url` rows here for recurring targets  
+**Watchlist**: `notes/website-list.csv` — add `site,sitemap_url` rows here for recurring targets  
 **Output**: `notes/sitemap-slugs/<site>.csv` (new slugs prepended, sorted by first_seen_at)  
 **Notes**: Falls back to CDP proxy automatically if direct fetch is blocked

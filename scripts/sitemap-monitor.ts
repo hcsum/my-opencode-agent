@@ -30,7 +30,7 @@ type PageUrlResult = {
   source: "direct" | "cdp";
 };
 
-const DEFAULT_WATCHLIST_PATH = "notes/website-watchlist.csv";
+const DEFAULT_WATCHLIST_PATH = "notes/website-list.csv";
 const DEFAULT_OUTPUT_DIR = "notes/sitemap-slugs";
 const CDP_PROXY_BASE_URL = "http://localhost:3456";
 
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
 
   if (targets.length === 0) {
     throw new Error(
-      "No sitemap targets found. Add rows to notes/website-watchlist.csv or pass --target site=https://example.com/sitemap.xml",
+      "No sitemap targets found. Add rows to notes/website-list.csv or pass --target site=https://example.com/sitemap.xml",
     );
   }
 

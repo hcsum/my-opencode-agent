@@ -80,7 +80,7 @@ npm run dev
 
 ## Sitemap Monitor
 
-- Fixed watchlist lives in `notes/website-watchlist.csv` with header `site,sitemap_url`.
+- Fixed watchlist lives in `notes/website-list.csv` with header `site,sitemap_url`.
 - Results are written to `notes/sitemap-slugs/<site>.csv` with header `site,slug,first_seen_at`.
 - Each site keeps its own CSV file, with newest discovered rows first.
 - The monitor tries direct fetch first and falls back to the local browser CDP path when direct fetch is blocked.

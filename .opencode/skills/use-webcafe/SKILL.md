@@ -5,12 +5,10 @@ description: Use the browse script to search, open, and read articles on Web.Caf
 
 # Use Web.Cafe Browse Tools
 
-## Strict Access Rule
+## Access Rule
 
 Use this skill only for Web.Cafe-specific shortcut flows like `search` and `messages`.
-For reading a known article URL or extracting article images/content, use `web-access` instead.
-
-When reading a known article URL with `web-access`, follow this order:
+For reading a known article URL or extracting article images/content, use `web-access` directly and follow these:
 
 1. First extract the main article text.
 2. Then extract all image URLs from the article body.
@@ -33,7 +31,7 @@ printf '%s' '{"action":"messages","query":"haochen"}' | npx tsx .opencode/skills
 printf '%s' '{"action":"messages","query":"外链","group":"哥飞的朋友们 7 群","maxLoads":5}' | npx tsx .opencode/skills/use-webcafe/scripts/browse.ts
 ```
 
-**Search is the primary navigation**: Always search first. Web.Cafe search covers all content. Search uses Simplified Chinese (e.g. "外链", "挖掘需求", "SEO").
+**Search is the primary navigation**: Always search first. Web.Cafe search covers all content. Search uses Simplified Chinese unless the word is in English in Chinese context (e.g. "SEO", "Adsense").
 
 ## How to search group messages
 
