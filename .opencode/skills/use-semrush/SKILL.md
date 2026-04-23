@@ -5,11 +5,7 @@ description: Get SEO data for any provided website or keyword.
 
 ## Prerequisite
 
-Load `web-access` first and run:
-
-```bash
-bash .opencode/skills/web-access/scripts/check-deps.sh
-```
+Load `web-access` 
 
 Then visit: https://sem.3ue.co/home
 

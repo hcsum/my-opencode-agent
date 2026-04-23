@@ -9,11 +9,7 @@ Use this when the user wants to inspect or summarize what is showing up in their
 
 ## Prerequisite
 
-If browser access is not already ready, load `web-access` first and run:
-
-```bash
-bash .opencode/skills/web-access/scripts/check-deps.sh
-```
+If browser access is not already ready, load `web-access` first
 
 ## Command
 

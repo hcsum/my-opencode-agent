@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 环境检查 + 确保 CDP Proxy 就绪（跨平台，替代 check-deps.sh）
+// 环境检查 + 确保 CDP Proxy 就绪（跨平台，替代 check-deps.mjs）
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';

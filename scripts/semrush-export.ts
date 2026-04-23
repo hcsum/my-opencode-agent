@@ -44,7 +44,7 @@ const DEFAULT_TOP_ROWS = 300;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEB_ACCESS_CHECK_SCRIPT = path.join(
   REPO_ROOT,
-  ".opencode/skills/web-access/scripts/check-deps.sh",
+  ".opencode/skills/web-access/scripts/check-deps.mjs",
 );
 
 async function main(): Promise<void> {
@@ -249,7 +249,7 @@ function runWebAccessCheck(): void {
 async function ensureBrowserProxyReady(): Promise<void> {
   const response = await fetch(`${CDP_PROXY_BASE_URL}/health`).catch(() => undefined);
   if (!response?.ok) {
-    throw new Error("web-access proxy 不可用，请先运行 check-deps.sh");
+    throw new Error("web-access proxy 不可用，请先运行 check-deps.mjs");
   }
 }
 

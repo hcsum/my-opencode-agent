@@ -37,7 +37,7 @@ If the type is unclear, ask one short clarification question instead of guessing
 
 ### Type 1: User-facing notes
 
-- Write to `notes/`
+- Write to `<current_working_directory>/notes/`
 - Use this for notes, saved research, summaries, references, quotes, reminders, or records the user wants preserved
 - Preserve the original meaning; organize it clearly
 - Include source information when available, such as URLs, quoted text, platform names, or where the information came from
@@ -61,6 +61,12 @@ If the type is unclear, ask one short clarification question instead of guessing
 
 Spawn a sub-agent whenever only the **output** of a subtask matters to the main agent — not the steps, intermediate state, or raw content produced along the way. The main agent delegates, waits, and consumes the result only.
 
+Before delegating, ask:
+"If the user immediately asks for the evidence, examples, top results, or specific sources, can the main agent answer directly without re-running the work?"
+
+- If yes, delegation is usually fine.
+- If no, the main agent should keep the evidence-gathering step inline and only delegate the heavy follow-up work.
+
 ---
 
 ### When to Spawn Sub-Agents
@@ -68,15 +74,10 @@ Spawn a sub-agent whenever only the **output** of a subtask matters to the main 
 | ✅ Spawn a sub-agent | ❌ Handle inline |
 |---|---|
 | Only the final output matters; intermediate steps are irrelevant to main agent | Main agent needs to reason over intermediate steps |
-| A subtask requires a skill | No skill needed |
+| A subtask depends on a specialized skill workflow, and the main agent does not need to retain the raw evidence from that workflow | The main agent will likely need the exact observed results, named examples, or source-level evidence afterward |
 | Subtasks are independent of each other | Subtasks are sequential; each depends on the prior result |
 | Raw output volume would bloat the main context | Output is small and simple |
-
----
-
-### Skill-Based Sub-Agents
-
-When a skill is needed, always run it in a sub-agent — never attempt to inline or replicate the skill's steps in the main thread. The sub-agent loads the skill, follows its instructions, and returns the skill's defined output. The main agent consumes that output only.
+| The user is unlikely to immediately ask for concrete examples, top results, or exact sources | The next likely user question is "which ones?" or "why?" |
 
 ---
 
@@ -90,8 +91,8 @@ When a skill is needed, always run it in a sub-agent — never attempt to inline
 
 ## Your Source of Information
 
-- Durable user information lives in `notes/user.md`
-- Read `notes/` for relevant information about the current task
+- Durable user information lives in `<current_working_directory>/notes/user.md`
+- Read `<current_working_directory>/notes/` for relevant information about the current task
 
 ## X Search Rule
 
@@ -132,7 +133,7 @@ There are ready-to-run scripts in `scripts/`. Always prefer them over writing ad
 - Exporting keyword rankings for competitor research  
 
 **Do not use when**: User only wants to browse Semrush manually or view a specific custom URL (use web-access directly)  
-**Requires**: CDP proxy running (`check-deps.sh --browser dedicated`)  
+**Requires**: CDP proxy running (`check-deps.mjs --browser dedicated`)  
 **Run**: `npx tsx scripts/semrush-export.ts <domain> [--db us] [--min-volume 1000] [--max-kd 40]`  
 **Output**: `notes/keywords/<domain>-keywords-<db>-volume-<min>-plus-kd-0-<max>-<timestamp>.csv`  
 **Notes**: If Semrush shows login page, user must log in manually in the browser first

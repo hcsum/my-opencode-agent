@@ -9,11 +9,7 @@ Use the local X search script when the user wants to find what people are saying
 
 ## Prerequisite
 
-If browser access is not already ready, load `web-access` first and run:
-
-```bash
-bash .opencode/skills/web-access/scripts/check-deps.sh
-```
+If browser access is not already ready, load `web-access`
 
 ## Command
 

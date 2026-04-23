@@ -1,21 +1,11 @@
 ---
 name: serp-inspection
-description: Inspect live search results to judge SEO competition, SERP weakness, and whether a keyword is realistically beatable.
+description: Inspect live search results to judge SEO competition, SERP weakness, and search intents.
 ---
-
-# Check SERP Inspection
-
-Use this skill when the task requires judging whether a keyword is actually worth targeting based on the live search results page, not just trend or community signals.
-
-This skill is about deciding whether a solo founder can win.
 
 ## Required browsing mode
 
-All SERP inspection must go through the `web-access` skill.
-
 - Load `web-access` first.
-
-Do not use generic assumptions about what ranks. Look at the real SERP.
 
 ## Core goals
 
@@ -58,15 +48,7 @@ For each keyword, determine:
      - no free tool where users clearly want one
      - weak topical depth
 
-4. Judge competition reality
-   - If the SERP is dominated by giant trusted brands with strong matching pages, say it is hard.
-   - If the SERP has many mediocre pages, low-focus listicles, weak UIs, stale directories, or forum threads, call out the opening clearly.
-   - Distinguish between:
-     - beatable now
-     - only beatable with a niche angle
-     - not worth targeting now
-
-5. Recommend the attack angle
+4. Recommend the attack angle
    - Explain what should be built to compete:
      - a better tool
      - a more focused landing page

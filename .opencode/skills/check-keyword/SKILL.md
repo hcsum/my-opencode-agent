@@ -16,5 +16,8 @@ NEVER rely on a single tool, always cross-check with multiple sources to get a m
 
 ## Output
 
-- Add the result to `./notes/keyword-research.csv`, fill in the information where applicable. NEVER delete or modify existing entries for other keywords, only append new rows or update entries for the current keyword.
+- Add the result to `<current_working_directory>/notes/keyword-research.csv`, fill in the information where applicable. NEVER delete or modify existing entries for other keywords, only append new row or update entries for the current keyword. Respect the existing format and columns in the CSV file.
+- When writing CSV fields, always preserve the exact column count and use proper CSV escaping: if a field contains a comma, double quote, or newline, wrap the entire field in double quotes and escape inner double quotes by doubling them.
 - A short report 
+
+## Do not close the tabs opened for this task, as they may be needed for reference in later steps.

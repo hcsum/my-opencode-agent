@@ -12,6 +12,8 @@ Load `web-access` first
 `https://ahrefs.com/keyword-difficulty/?country=us&input={keyword}`
 
 - Can collect: `KD`, difficulty label, estimated `RD needed` to reach Top 10, and SERP overview competitiveness hints
+- Important: do not judge success or failure from `document.body.innerText.slice(0, N)` or other early-page snippets. On Ahrefs keyword difficulty pages, the actual result block may appear far down in the DOM and load asynchronously.
+- Prefer reading the full text or at least the tail, and extract around stable phrases like `Keyword Difficulty for` and `We estimate that you'll need followed backlinks from` before concluding `No data`.
 
 ## Keyword Generator
 
