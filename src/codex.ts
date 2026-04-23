@@ -35,54 +35,25 @@ export class CodexSession {
   async sendTurn(channel: string, input: TurnInput): Promise<string> {
     const sessionKey = input.sessionKey || channel;
     const prompt = buildPromptBody(channel, input);
-
-    try {
-      const thread = await this.getOrCreateThread(channel, sessionKey);
-      const turn = await thread.run(prompt);
-      await this.persistThreadId(sessionKey, thread);
-      return turn.finalResponse.trim() || "No response text returned.";
-    } catch (error) {
-      if (!shouldRetryWithoutModel(error, channel, this.config.gmailModel)) {
-        throw error;
-      }
-
-      console.warn(
-        `[codex] gmail model "${this.config.gmailModel}" not supported in this auth context; retrying without GMAIL_MODEL`,
-      );
-
-      const fallbackThread = await this.getOrCreateThread(
-        channel,
-        sessionKey,
-        true,
-      );
-      const turn = await fallbackThread.run(prompt);
-      await this.persistThreadId(sessionKey, fallbackThread);
-      return turn.finalResponse.trim() || "No response text returned.";
-    }
+    const thread = await this.getOrCreateThread(sessionKey);
+    const turn = await thread.run(prompt);
+    await this.persistThreadId(sessionKey, thread);
+    return turn.finalResponse.trim() || "No response text returned.";
   }
 
-  private async getOrCreateThread(
-    channel: string,
-    sessionKey: string,
-    disableGmailModel = false,
-  ): Promise<Thread> {
-    const threadKey = getThreadMapKey(sessionKey, disableGmailModel);
-    let promise = this.threadPromises.get(threadKey);
+  private async getOrCreateThread(sessionKey: string): Promise<Thread> {
+    let promise = this.threadPromises.get(sessionKey);
     if (!promise) {
-      promise = this.loadOrCreateThread(channel, sessionKey, disableGmailModel);
-      this.threadPromises.set(threadKey, promise);
+      promise = this.loadOrCreateThread(sessionKey);
+      this.threadPromises.set(sessionKey, promise);
     }
     return promise;
   }
 
-  private async loadOrCreateThread(
-    channel: string,
-    sessionKey: string,
-    disableGmailModel: boolean,
-  ): Promise<Thread> {
+  private async loadOrCreateThread(sessionKey: string): Promise<Thread> {
     const state = await this.loadState();
     const threadId = state.sessions?.[sessionKey];
-    const options = buildThreadOptions(this.config, channel, disableGmailModel);
+    const options = buildThreadOptions(this.config);
 
     if (threadId) {
       console.log(`[codex] resuming ${sessionKey} thread ${threadId}`);
@@ -131,11 +102,7 @@ function buildPromptBody(channel: string, input: TurnInput): string {
   ].join("\n");
 }
 
-function buildThreadOptions(
-  config: AppConfig,
-  channel: string,
-  disableGmailModel: boolean,
-): ThreadOptions {
+function buildThreadOptions(config: AppConfig): ThreadOptions {
   return {
     workingDirectory: process.cwd(),
     approvalPolicy: config.codexApprovalPolicy,
@@ -146,31 +113,8 @@ function buildThreadOptions(
     ...(config.codexNetworkAccessEnabled !== undefined
       ? { networkAccessEnabled: config.codexNetworkAccessEnabled }
       : {}),
-    ...(channel === "gmail" && !disableGmailModel && config.gmailModel
-      ? { model: config.gmailModel }
+    ...(config.codexAdditionalDirectories.length
+      ? { additionalDirectories: config.codexAdditionalDirectories }
       : {}),
   };
-}
-
-function shouldRetryWithoutModel(
-  error: unknown,
-  channel: string,
-  configuredModel: string | undefined,
-): boolean {
-  if (channel !== "gmail" || !configuredModel) return false;
-  const message = extractErrorMessage(error).toLowerCase();
-  return (
-    message.includes("model is not supported") &&
-    message.includes("chatgpt account")
-  );
-}
-
-function extractErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return "";
-}
-
-function getThreadMapKey(sessionKey: string, disableGmailModel: boolean): string {
-  return disableGmailModel ? `${sessionKey}|no-model` : sessionKey;
 }

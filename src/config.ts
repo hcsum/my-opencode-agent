@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 
 import dotenv from "dotenv";
@@ -31,6 +32,24 @@ function parseChannels(raw: string | undefined): string[] {
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
   return channels.length ? channels : ["telegram", "gmail"];
+}
+
+function parseAdditionalDirectories(raw: string | undefined): string[] {
+  if (raw?.trim()) {
+    return dedupe(
+      raw
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    );
+  }
+
+  const home = os.homedir();
+  return dedupe([home, path.join(home, ".web-access"), path.join(home, ".gmail-mcp")]);
+}
+
+function dedupe(values: string[]): string[] {
+  return Array.from(new Set(values));
 }
 
 export function loadConfig(): AppConfig {
@@ -75,7 +94,9 @@ export function loadConfig(): AppConfig {
         | "xhigh"
         | undefined) || undefined,
     codexNetworkAccessEnabled: parseBoolean(process.env.CODEX_NETWORK_ACCESS),
-    gmailModel: process.env.GMAIL_MODEL?.trim() || undefined,
+    codexAdditionalDirectories: parseAdditionalDirectories(
+      process.env.CODEX_ADDITIONAL_DIRS,
+    ),
     stateFile:
       process.env.STATE_FILE?.trim() || path.join(".data", "state.json"),
     gmailTo: process.env.GMAIL_TO?.trim() || undefined,

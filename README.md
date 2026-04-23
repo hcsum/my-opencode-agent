@@ -33,9 +33,9 @@ Key variables:
 - `OPENAI_BASE_URL`: optional custom base URL
 - `CODEX_APPROVAL_POLICY`: default `never` for non-interactive bridge runs
 - `CODEX_SANDBOX_MODE`: `read-only` | `workspace-write` | `danger-full-access`
+- `CODEX_ADDITIONAL_DIRS`: optional comma-separated extra directories for Codex sandbox
 - `STATE_FILE`: local state file for persisted thread IDs
 - `GMAIL_TO`: target inbox address to poll
-- `GMAIL_MODEL`: optional model override for Gmail channel (use plain model id, e.g. `gpt-5.4`)
 - `GMAIL_POLL_INTERVAL_MS`: polling interval
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALLOWED_CHAT_ID`: required only when Telegram is enabled
 
@@ -77,4 +77,4 @@ npm run start:gmail
 - This bridge is non-interactive by design; `CODEX_APPROVAL_POLICY=never` avoids blocked tool approval prompts.
 - If `CHANNELS=gmail`, Telegram env vars are not required.
 - If startup fails with `invalid_grant`, your refresh token is invalid/expired. Run `npm run gmail:reauth` and then `npm run start:gmail`.
-- If Gmail logs model unsupported errors with ChatGPT auth, remove `GMAIL_MODEL` or set it to a plain model id. The bridge now auto-retries without `GMAIL_MODEL`.
+- For browser-based skills under `workspace-write`, keep `CODEX_NETWORK_ACCESS=true`. By default the bridge also adds `$HOME`, `~/.web-access`, and `~/.gmail-mcp` to `additionalDirectories`.

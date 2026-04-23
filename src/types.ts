@@ -9,7 +9,7 @@ export interface AppConfig {
   codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   codexReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   codexNetworkAccessEnabled?: boolean;
-  gmailModel?: string;
+  codexAdditionalDirectories: string[];
   stateFile: string;
   gmailTo?: string;
   gmailPollIntervalMs: number;
