@@ -19,6 +19,15 @@ OpenCode workspace with local skills, local notes, and an optional Telegram brid
 
 ## Modes
 
+### 0. Codex CLI only (native setup)
+
+If you only use Codex CLI in this repo, use the native Codex layout:
+
+- `AGENTS.md` at repo root for agent behavior rules
+- `.codex/skills/*` for reusable local skills
+
+This setup is independent from the OpenCode SDK bridge code in `src/`.
+
 ### 1. OpenCode only
 
 If you only want to use the project in OpenCode, no Telegram and no shared server are required.
