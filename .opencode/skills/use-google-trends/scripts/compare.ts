@@ -33,6 +33,7 @@ const QUERY_HEADING_PATTERNS = ["Commonly searched queries", "Related queries"];
 const QUERY_CHANGE_PATTERN = /^(?:Breakout|[+-]?\d[\d,]*%)$/i;
 const DEFAULT_GEO = "US";
 const DEFAULT_DATE = "today 12-m";
+const DEFAULT_HL = "en-US";
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -51,7 +52,8 @@ function buildExploreUrl(
 ): string {
   const base = "https://trends.google.com/trends/explore";
   const q = keywords.map((k) => encodeURIComponent(k)).join(",");
-  return `${base}?q=${q}&geo=${encodeURIComponent(geo)}&date=${encodeURIComponent(date)}`;
+  // Force English UI so the page text parsing is stable across locales.
+  return `${base}?q=${q}&geo=${encodeURIComponent(geo)}&date=${encodeURIComponent(date)}&hl=${encodeURIComponent(DEFAULT_HL)}`;
 }
 
 function normalizeKeywords(input: string[]): string[] {
@@ -87,16 +89,18 @@ async function waitForTextInPage(
   targetId: string,
   predicate: (text: string) => boolean,
   timeoutMs = 30000,
-): Promise<void> {
+): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const text = await evalInTab<string>(
       targetId,
       "document.body.innerText",
     ).catch(() => "");
-    if (predicate(text)) return;
+    if (predicate(text)) return true;
     await new Promise((r) => setTimeout(r, 1000));
   }
+
+  return false;
 }
 
 async function openTrendsTab(url: string): Promise<string> {
@@ -346,13 +350,18 @@ async function compareTrends(input: CompareInput): Promise<ScriptResult> {
     targetId = tabId;
     await dismissConsent(tabId);
 
-    await waitForTextInPage(
+    const ready = await waitForTextInPage(
       tabId,
       (text) =>
         AVG_HEADING_PATTERNS.some((p) => text.includes(p)) &&
         QUERY_HEADING_PATTERNS.some((p) => text.includes(p)),
       30000,
     );
+    if (!ready) {
+      throw new Error(
+        "Timed out waiting for Google Trends content (Average interest / Related queries).",
+      );
+    }
 
     for (let i = 0; i < 4; i += 1) {
       await scrollTab(tabId, { y: 1800, direction: "down" });

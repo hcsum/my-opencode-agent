@@ -59,25 +59,13 @@ If the type is unclear, ask one short clarification question instead of guessing
 
 ## Sub-Agent Divide & Conquer Strategy
 
-Spawn a sub-agent whenever only the **output** of a subtask matters to the main agent — not the steps, intermediate state, or raw content produced along the way. The main agent delegates, waits, and consumes the result only.
+Spawn a sub-agent when only the **output** of a subtask matters to the main agent — not the steps, intermediate state, or raw content produced along the way. The main agent delegates, waits, and consumes the result only.
 
 Before delegating, ask:
 "If the user immediately asks for the evidence, examples, top results, or specific sources, can the main agent answer directly without re-running the work?"
 
 - If yes, delegation is usually fine.
 - If no, the main agent should keep the evidence-gathering step inline and only delegate the heavy follow-up work.
-
----
-
-### When to Spawn Sub-Agents
-
-| ✅ Spawn a sub-agent | ❌ Handle inline |
-|---|---|
-| Only the final output matters; intermediate steps are irrelevant to main agent | Main agent needs to reason over intermediate steps |
-| A subtask depends on a specialized skill workflow, and the main agent does not need to retain the raw evidence from that workflow | The main agent will likely need the exact observed results, named examples, or source-level evidence afterward |
-| Subtasks are independent of each other | Subtasks are sequential; each depends on the prior result |
-| Raw output volume would bloat the main context | Output is small and simple |
-| The user is unlikely to immediately ask for concrete examples, top results, or exact sources | The next likely user question is "which ones?" or "why?" |
 
 ---
 
