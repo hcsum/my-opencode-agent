@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { loadConfig } from "./config.js";
-import { OpencodeSession } from "./opencode.js";
+import { CodexSession } from "./codex.js";
 import { SerialQueue } from "./queue.js";
 import { TelegramBridge } from "./telegram.js";
 import { GmailBridge } from "./gmail.js";
@@ -11,28 +11,50 @@ import { initDatabase } from "./db.js";
 async function main(): Promise<void> {
   const releaseLock = acquireInstanceLock();
   const config = loadConfig();
+  const enabledChannels = new Set(config.channels);
   initDatabase();
   const queue = new SerialQueue();
-  const opencode = new OpencodeSession(config);
-  await opencode.healthcheck();
+  const codex = new CodexSession(config);
+  await codex.healthcheck();
 
   const launches: Promise<void>[] = [];
 
-  if (config.telegramBotToken !== "123456:replace-me") {
-    launches.push(
-      new TelegramBridge(config, opencode, queue)
-        .launch()
-        .catch((err) => console.error("[telegram] failed to start", err)),
-    );
-  } else {
-    console.log("[telegram] skipped — placeholder bot token");
+  if (enabledChannels.has("telegram")) {
+    if (
+      config.telegramBotToken === "123456:replace-me" ||
+      !config.telegramAllowedChatId
+    ) {
+      console.log(
+        "[telegram] skipped — missing TELEGRAM_BOT_TOKEN or TELEGRAM_ALLOWED_CHAT_ID",
+      );
+    } else {
+      launches.push(
+        new TelegramBridge(config, codex, queue)
+          .launch()
+          .catch((err) =>
+            console.error("[telegram] failed to start", formatErrorMessage(err)),
+          ),
+      );
+    }
   }
 
-  if (config.gmailTo) {
-    launches.push(
-      new GmailBridge(config, opencode, queue)
-        .launch()
-        .catch((err) => console.error("[gmail] failed to start", err)),
+  if (enabledChannels.has("gmail")) {
+    if (!config.gmailTo) {
+      console.log("[gmail] skipped — missing GMAIL_TO");
+    } else {
+      launches.push(
+        new GmailBridge(config, codex, queue)
+          .launch()
+          .catch((err) =>
+            console.error("[gmail] failed to start", formatErrorMessage(err)),
+          ),
+      );
+    }
+  }
+
+  if (launches.length === 0) {
+    throw new Error(
+      "[app] no channels enabled; set CHANNELS and required env vars",
     );
   }
 
@@ -109,4 +131,10 @@ function isPidAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "unknown error";
 }

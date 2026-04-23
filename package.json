@@ -3,15 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Telegram bridge for a shared OpenCode server",
+  "description": "Telegram and Gmail bridges backed by Codex SDK",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "dev:gmail": "CHANNELS=gmail tsx src/index.ts",
+    "dev:telegram": "CHANNELS=telegram tsx src/index.ts",
+    "gmail:reauth": "tsx scripts/gmail-reauth.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "start:gmail": "CHANNELS=gmail node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^0.9.5",
+    "@openai/codex": "^0.123.0",
+    "@openai/codex-sdk": "^0.123.0",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^16.6.1",
     "googleapis": "^171.4.0",

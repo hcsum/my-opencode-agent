@@ -1,11 +1,15 @@
 export interface AppConfig {
   telegramBotToken: string;
   telegramAllowedChatId: number;
-  opencodeBaseUrl: string;
-  opencodeServerUsername?: string;
-  opencodeServerPassword?: string;
+  channels: string[];
+  codexApiKey?: string;
+  codexBaseUrl?: string;
+  codexPathOverride?: string;
+  codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+  codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
+  codexReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+  codexNetworkAccessEnabled?: boolean;
   gmailModel?: string;
-  telegramSessionTitle: string;
   stateFile: string;
   gmailTo?: string;
   gmailPollIntervalMs: number;
@@ -13,8 +17,7 @@ export interface AppConfig {
 }
 
 export interface PersistedState {
-  sessionId?: string;
-  sessions?: Record<string, string>;
+  sessions?: Record<string, string>; // sessionKey -> codex thread id
   updatedAt?: string;
 }
 

@@ -9,7 +9,7 @@ import type { OAuth2Client } from "google-auth-library";
 
 import type { AppConfig } from "./types.js";
 import { SerialQueue } from "./queue.js";
-import { OpencodeSession } from "./opencode.js";
+import { CodexSession } from "./codex.js";
 import {
   isProcessed,
   markProcessed,
@@ -34,7 +34,7 @@ export class GmailBridge {
 
   constructor(
     private readonly config: AppConfig,
-    private readonly opencode: OpencodeSession,
+    private readonly codex: CodexSession,
     private readonly queue: SerialQueue,
   ) {}
 
@@ -80,7 +80,15 @@ export class GmailBridge {
 
     this.gmail = google.gmail({ version: "v1", auth: this.oauth2Client });
 
-    const profile = await this.gmail.users.getProfile({ userId: "me" });
+    let profile;
+    try {
+      profile = await this.gmail.users.getProfile({ userId: "me" });
+    } catch (error) {
+      if (isInvalidGrantError(error)) {
+        throw new Error(buildReauthHint(), { cause: error });
+      }
+      throw error;
+    }
     this.userEmail = profile.data.emailAddress || "";
     console.log(`[gmail] connected as ${this.userEmail}`);
 
@@ -114,7 +122,9 @@ export class GmailBridge {
 
     this.pollTimer = setTimeout(() => {
       this.pollForMessages()
-        .catch((err) => console.error("[gmail] poll error", err))
+        .catch((err) =>
+          console.error("[gmail] poll error", formatErrorMessage(err)),
+        )
         .finally(() => {
           if (this.gmail) this.schedulePoll();
         });
@@ -147,7 +157,9 @@ export class GmailBridge {
         await this.processMessage(msg.id);
       } catch (err) {
         releaseClaim(msg.id);
-        console.error(`[gmail] failed to process message ${msg.id}`, err);
+        console.error(
+          `[gmail] failed to process message ${msg.id}: ${formatErrorMessage(err)}`,
+        );
       }
     }
 
@@ -206,8 +218,8 @@ export class GmailBridge {
       const result = await this.queue.enqueue(
         `gmail from=${senderEmail} subject=${subject}`,
         async () => {
-          const opencodeStartedAt = Date.now();
-          const response = await this.opencode.sendTurn("gmail", {
+          const codexStartedAt = Date.now();
+          const response = await this.codex.sendTurn("gmail", {
             text: content,
             senderName,
             chatTitle: subject,
@@ -215,17 +227,16 @@ export class GmailBridge {
               parseInt(message.internalDate || String(Date.now()), 10),
             ),
             sessionKey: `gmail:${threadId}`,
-            sessionTitle: `Gmail ${subject}`,
           });
           console.log(
-            `[gmail] opencode completed ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
+            `[gmail] codex completed ${messageId} in ${Date.now() - codexStartedAt}ms`,
           );
           return response;
         },
       );
 
       console.log(
-        `[gmail] queue+opencode completed ${messageId} in ${Date.now() - queuedAt}ms`,
+        `[gmail] queue+codex completed ${messageId} in ${Date.now() - queuedAt}ms`,
       );
 
       const replyStartedAt = Date.now();
@@ -244,7 +255,9 @@ export class GmailBridge {
       );
     } catch (err) {
       releaseClaim(messageId);
-      console.error(`[gmail] failed to process/reply thread ${threadId}`, err);
+      console.error(
+        `[gmail] failed to process/reply thread ${threadId}: ${formatErrorMessage(err)}`,
+      );
       throw err;
     }
 
@@ -355,6 +368,38 @@ export class GmailBridge {
 
     console.log(`[gmail] using proxy ${this.config.gmailProxy}`);
   }
+}
+
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "unknown error";
+}
+
+function isInvalidGrantError(error: unknown): boolean {
+  const message = formatErrorMessage(error).toLowerCase();
+  if (message.includes("invalid_grant")) return true;
+
+  if (typeof error !== "object" || error === null) return false;
+  if (!("response" in error)) return false;
+  const response = (error as { response?: unknown }).response;
+  if (typeof response !== "object" || response === null) return false;
+  if (!("data" in response)) return false;
+
+  const data = (response as { data?: unknown }).data;
+  if (typeof data !== "object" || data === null) return false;
+  const grant = (data as { error?: unknown }).error;
+  return typeof grant === "string" && grant.toLowerCase() === "invalid_grant";
+}
+
+function buildReauthHint(): string {
+  return [
+    "Gmail OAuth refresh token is invalid (invalid_grant).",
+    "Reauthorize with:",
+    "npm run gmail:reauth",
+    "Then restart bridge with:",
+    "npm run start:gmail",
+  ].join("\n");
 }
 
 function parseFromHeader(from: string): { name: string; email: string } {
