@@ -9,7 +9,7 @@ import type { OAuth2Client } from "google-auth-library";
 
 import type { AppConfig } from "./types.js";
 import { SerialQueue } from "./queue.js";
-import type { AgentSession } from "./session.js";
+import { OpencodeSession } from "./opencode.js";
 import {
   isProcessed,
   markProcessed,
@@ -34,7 +34,7 @@ export class GmailBridge {
 
   constructor(
     private readonly config: AppConfig,
-    private readonly session: AgentSession,
+    private readonly opencode: OpencodeSession,
     private readonly queue: SerialQueue,
   ) {}
 
@@ -80,15 +80,7 @@ export class GmailBridge {
 
     this.gmail = google.gmail({ version: "v1", auth: this.oauth2Client });
 
-    let profile;
-    try {
-      profile = await this.gmail.users.getProfile({ userId: "me" });
-    } catch (error) {
-      if (isInvalidGrantError(error)) {
-        throw new Error(buildReauthHint(), { cause: error });
-      }
-      throw error;
-    }
+    const profile = await this.gmail.users.getProfile({ userId: "me" });
     this.userEmail = profile.data.emailAddress || "";
     console.log(`[gmail] connected as ${this.userEmail}`);
 
@@ -122,9 +114,7 @@ export class GmailBridge {
 
     this.pollTimer = setTimeout(() => {
       this.pollForMessages()
-        .catch((err) =>
-          console.error("[gmail] poll error", formatErrorMessage(err)),
-        )
+        .catch((err) => console.error("[gmail] poll error", err))
         .finally(() => {
           if (this.gmail) this.schedulePoll();
         });
@@ -146,20 +136,19 @@ export class GmailBridge {
 
     let newCount = 0;
     for (const msg of messages) {
-      const msgId = msg.id;
-      if (!msgId || isProcessed(msgId)) continue;
-      if (!tryClaimMessage(msgId)) {
-        console.log(`[gmail] skipped claimed message ${msgId}`);
+      if (!msg.id || isProcessed(msg.id)) continue;
+      if (!tryClaimMessage(msg.id)) {
+        console.log(`[gmail] skipped claimed message ${msg.id}`);
         continue;
       }
       newCount++;
-      console.log(`[gmail] processing new message ${msgId}`);
-      void this.processMessage(msgId).catch((err) => {
-        releaseClaim(msgId);
-        console.error(
-          `[gmail] failed to process message ${msgId}: ${formatErrorMessage(err)}`,
-        );
-      });
+      console.log(`[gmail] processing new message ${msg.id}`);
+      try {
+        await this.processMessage(msg.id);
+      } catch (err) {
+        releaseClaim(msg.id);
+        console.error(`[gmail] failed to process message ${msg.id}`, err);
+      }
     }
 
     console.log(
@@ -191,10 +180,6 @@ export class GmailBridge {
       "(no subject)";
     const rfcMessageId =
       headers.find((h) => h.name?.toLowerCase() === "message-id")?.value || "";
-    const inReplyTo =
-      headers.find((h) => h.name?.toLowerCase() === "in-reply-to")?.value || "";
-    const references =
-      headers.find((h) => h.name?.toLowerCase() === "references")?.value || "";
 
     const { name: senderName, email: senderEmail } = parseFromHeader(
       fromHeader,
@@ -209,13 +194,6 @@ export class GmailBridge {
       messageId: rfcMessageId,
     });
 
-    const sessionKey = buildGmailSessionKey({
-      fallbackMessageId: messageId,
-      messageIdHeader: rfcMessageId,
-      inReplyToHeader: inReplyTo,
-      referencesHeader: references,
-    });
-
     const textBody = stripQuotedReply(body).trim() || subject;
     const content = `[Email from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${textBody}`;
 
@@ -228,25 +206,26 @@ export class GmailBridge {
       const result = await this.queue.enqueue(
         `gmail from=${senderEmail} subject=${subject}`,
         async () => {
-          const backendStartedAt = Date.now();
-          const response = await this.session.sendTurn("gmail", {
+          const opencodeStartedAt = Date.now();
+          const response = await this.opencode.sendTurn("gmail", {
             text: content,
             senderName,
             chatTitle: subject,
             timestamp: new Date(
               parseInt(message.internalDate || String(Date.now()), 10),
             ),
-            sessionKey,
+            sessionKey: `gmail:${threadId}`,
+            sessionTitle: `Gmail ${subject}`,
           });
           console.log(
-            `[gmail] backend completed ${messageId} in ${Date.now() - backendStartedAt}ms`,
+            `[gmail] opencode completed ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
           );
           return response;
         },
       );
 
       console.log(
-        `[gmail] queue+backend completed ${messageId} in ${Date.now() - queuedAt}ms`,
+        `[gmail] queue+opencode completed ${messageId} in ${Date.now() - queuedAt}ms`,
       );
 
       const replyStartedAt = Date.now();
@@ -265,9 +244,7 @@ export class GmailBridge {
       );
     } catch (err) {
       releaseClaim(messageId);
-      console.error(
-        `[gmail] failed to process/reply thread ${threadId}: ${formatErrorMessage(err)}`,
-      );
+      console.error(`[gmail] failed to process/reply thread ${threadId}`, err);
       throw err;
     }
 
@@ -349,13 +326,15 @@ export class GmailBridge {
   }
 
   private setupProxy(): void {
-    if (!this.config.gmailProxy) return;
+    const proxy =
+      process.env.HTTPS_PROXY?.trim() ||
+      process.env.https_proxy?.trim();
 
-    process.env.HTTP_PROXY = this.config.gmailProxy;
-    process.env.HTTPS_PROXY = this.config.gmailProxy;
-    process.env.ALL_PROXY = this.config.gmailProxy;
+    if (!proxy) return;
 
-    const agent = new ProxyAgent(this.config.gmailProxy);
+    process.env.HTTPS_PROXY = proxy;
+
+    const agent = new ProxyAgent(proxy);
     const origFetch = globalThis.fetch;
 
     globalThis.fetch = (input, init) => {
@@ -376,40 +355,8 @@ export class GmailBridge {
       return origFetch(input, init);
     };
 
-    console.log(`[gmail] using proxy ${this.config.gmailProxy}`);
+    console.log(`[gmail] using proxy ${proxy}`);
   }
-}
-
-function formatErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return "unknown error";
-}
-
-function isInvalidGrantError(error: unknown): boolean {
-  const message = formatErrorMessage(error).toLowerCase();
-  if (message.includes("invalid_grant")) return true;
-
-  if (typeof error !== "object" || error === null) return false;
-  if (!("response" in error)) return false;
-  const response = (error as { response?: unknown }).response;
-  if (typeof response !== "object" || response === null) return false;
-  if (!("data" in response)) return false;
-
-  const data = (response as { data?: unknown }).data;
-  if (typeof data !== "object" || data === null) return false;
-  const grant = (data as { error?: unknown }).error;
-  return typeof grant === "string" && grant.toLowerCase() === "invalid_grant";
-}
-
-function buildReauthHint(): string {
-  return [
-    "Gmail OAuth refresh token is invalid (invalid_grant).",
-    "Reauthorize with:",
-    "npm run gmail:reauth",
-    "Then restart bridge with:",
-    "npm run start:gmail",
-  ].join("\n");
 }
 
 function parseFromHeader(from: string): { name: string; email: string } {
@@ -474,37 +421,4 @@ function isReplyHeader(line: string): boolean {
     /^主题：/i.test(line) ||
     /^收件人：/i.test(line)
   );
-}
-
-function buildGmailSessionKey(input: {
-  fallbackMessageId: string;
-  messageIdHeader: string;
-  inReplyToHeader: string;
-  referencesHeader: string;
-}): string {
-  const references = parseMessageIdList(input.referencesHeader);
-  const inReplyTo = parseMessageIdList(input.inReplyToHeader);
-  const current = parseMessageIdList(input.messageIdHeader);
-
-  // Reply chain -> reuse root message's session.
-  const rootReplyTarget = references[0] || inReplyTo[0];
-  if (rootReplyTarget) {
-    return `gmail:${rootReplyTarget}`;
-  }
-
-  // New email -> new session keyed by current Message-ID.
-  const currentMessageId = current[0];
-  if (currentMessageId) {
-    return `gmail:${currentMessageId}`;
-  }
-
-  // Fallback for malformed/missing headers.
-  return `gmail:${input.fallbackMessageId}`;
-}
-
-function parseMessageIdList(value: string): string[] {
-  const matches = value.match(/<[^>]+>/g) || [];
-  return matches
-    .map((entry) => entry.replace(/[<>]/g, "").trim())
-    .filter(Boolean);
 }

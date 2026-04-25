@@ -2,14 +2,14 @@ import { Telegraf } from "telegraf";
 
 import type { AppConfig } from "./types.js";
 import { SerialQueue } from "./queue.js";
-import type { AgentSession } from "./session.js";
+import { OpencodeSession } from "./opencode.js";
 
 export class TelegramBridge {
   private readonly bot: Telegraf;
 
   constructor(
     private readonly config: AppConfig,
-    private readonly session: AgentSession,
+    private readonly opencode: OpencodeSession,
     private readonly queue: SerialQueue,
   ) {
     this.bot = new Telegraf(config.telegramBotToken);
@@ -57,7 +57,7 @@ export class TelegramBridge {
       try {
         const result = await this.queue.enqueue(label, async () => {
           const startedAt = Date.now();
-          const response = await this.session.sendTurn("telegram", {
+          const response = await this.opencode.sendTurn("telegram", {
             text,
             senderName,
             chatTitle: "title" in ctx.chat ? ctx.chat.title : undefined,

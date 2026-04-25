@@ -26,11 +26,9 @@ const SCOPES = [
 ];
 
 async function main(): Promise<void> {
-  const proxy = process.env.GMAIL_PROXY?.trim();
+  const proxy = process.env.HTTPS_PROXY?.trim() || process.env.https_proxy?.trim();
   if (proxy) {
-    process.env.HTTP_PROXY = proxy;
     process.env.HTTPS_PROXY = proxy;
-    process.env.ALL_PROXY = proxy;
     console.log(`[reauth] using proxy ${proxy}`);
   }
 
