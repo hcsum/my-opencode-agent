@@ -9,9 +9,10 @@ export class SerialQueue {
   enqueue<T>(label: string, run: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this.jobs.push(async () => {
+        const queuedAfterStart = this.jobs.length - 1;
         try {
           console.log(
-            `[queue] start ${label}; remaining=${this.jobs.length - 1}`,
+            `[queue] start ${label}; remaining=${Math.max(queuedAfterStart, 0)}`,
           );
           const result = await run();
           resolve(result);

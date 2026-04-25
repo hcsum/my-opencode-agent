@@ -1,4 +1,9 @@
+export type AgentBackend = "codex" | "opencode";
+
 export interface AppConfig {
+  agentBackend: AgentBackend;
+  agentDefaultModel: string;
+  agentTurnTimeoutMs: number;
   telegramBotToken: string;
   telegramAllowedChatId: number;
   channels: string[];
@@ -10,6 +15,9 @@ export interface AppConfig {
   codexReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   codexNetworkAccessEnabled?: boolean;
   codexAdditionalDirectories: string[];
+  opencodeBaseUrl?: string;
+  opencodeServerUsername?: string;
+  opencodeServerPassword?: string;
   stateFile: string;
   gmailTo?: string;
   gmailPollIntervalMs: number;
@@ -17,7 +25,8 @@ export interface AppConfig {
 }
 
 export interface PersistedState {
-  sessions?: Record<string, string>; // sessionKey -> codex thread id
+  sessions?: Record<string, string>; // legacy fallback (codex)
+  backendSessions?: Record<AgentBackend, Record<string, string>>;
   updatedAt?: string;
 }
 

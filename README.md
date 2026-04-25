@@ -1,23 +1,32 @@
 # opencode-agent
 
-This repo now runs channel bridges on top of the Codex SDK (`@openai/codex-sdk`), not the OpenCode SDK.
+This repo runs channel bridges with a switchable backend:
+
+- Codex SDK (`@openai/codex-sdk`)
+- OpenCode SDK (`@opencode-ai/sdk`)
 
 ## Current Architecture
 
-- `src/codex.ts`: wraps Codex threads (`startThread` / `resumeThread` / `run`)
+- `src/codex.ts`: Codex backend session adapter
+- `src/opencode.ts`: OpenCode backend session adapter
+- `src/session-factory.ts`: selects backend from env
 - `src/telegram.ts`: Telegram inbound/outbound bridge
 - `src/gmail.ts`: Gmail polling + reply bridge
-- `src/state.ts`: persists channel session keys to Codex thread IDs in `.data/state.json`
+- `src/state.ts`: persists backend-scoped session ids in `.data/state.json`
 - `AGENTS.md` + `.codex/skills` (symlink to `.opencode/skills`): native Codex CLI guidance/skills
 
 ## Requirements
 
 - Node.js 22+
 - npm dependencies installed (`npm install`)
-- Codex SDK auth:
+- Codex backend auth:
   - set `CODEX_API_KEY`, or
   - set `OPENAI_API_KEY`, or
   - rely on existing Codex CLI auth on your machine
+- OpenCode backend auth:
+  - set `AGENT_BACKEND=opencode`
+  - set `OPENCODE_BASE_URL`
+  - optional basic auth via `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD`
 - Gmail channel additionally requires OAuth files under `~/.gmail-mcp/`:
   - `gcp-oauth.keys.json`
   - `credentials.json`
@@ -29,11 +38,15 @@ Copy `.env.example` to `.env` and fill what you need.
 Key variables:
 
 - `CHANNELS`: comma-separated channels (`telegram,gmail`, `gmail`, `telegram`)
+- `AGENT_BACKEND`: `codex` (default) or `opencode`
+- `AGENT_DEFAULT_MODEL`: default model for both backends (`gpt-5.4` by default)
+- `AGENT_TURN_TIMEOUT_MS`: timeout for a single backend prompt call (default `180000`)
 - `CODEX_API_KEY` / `OPENAI_API_KEY`: auth for Codex SDK
 - `OPENAI_BASE_URL`: optional custom base URL
 - `CODEX_APPROVAL_POLICY`: default `never` for non-interactive bridge runs
 - `CODEX_SANDBOX_MODE`: `read-only` | `workspace-write` | `danger-full-access`
 - `CODEX_ADDITIONAL_DIRS`: optional comma-separated extra directories for Codex sandbox
+- `OPENCODE_BASE_URL`: OpenCode server base URL (when `AGENT_BACKEND=opencode`)
 - `STATE_FILE`: local state file for persisted thread IDs
 - `GMAIL_TO`: target inbox address to poll
 - `GMAIL_POLL_INTERVAL_MS`: polling interval
@@ -51,6 +64,18 @@ Run both channels:
 
 ```bash
 npm run dev
+```
+
+Run with OpenCode backend:
+
+```bash
+npm run dev:opencode
+```
+
+Run OpenCode server + bridge together:
+
+```bash
+npm run start:opencode:stack
 ```
 
 Run Gmail channel only:
@@ -78,3 +103,4 @@ npm run start:gmail
 - If `CHANNELS=gmail`, Telegram env vars are not required.
 - If startup fails with `invalid_grant`, your refresh token is invalid/expired. Run `npm run gmail:reauth` and then `npm run start:gmail`.
 - For browser-based skills under `workspace-write`, keep `CODEX_NETWORK_ACCESS=true`. By default the bridge also adds `$HOME`, `~/.web-access`, and `~/.gmail-mcp` to `additionalDirectories`.
+- Sessions are namespaced per backend in `state.json`, so switching `AGENT_BACKEND` does not overwrite existing conversation context.

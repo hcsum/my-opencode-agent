@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { loadConfig } from "./config.js";
-import { CodexSession } from "./codex.js";
+import { createAgentSession } from "./session-factory.js";
 import { SerialQueue } from "./queue.js";
 import { TelegramBridge } from "./telegram.js";
 import { GmailBridge } from "./gmail.js";
@@ -14,8 +14,9 @@ async function main(): Promise<void> {
   const enabledChannels = new Set(config.channels);
   initDatabase();
   const queue = new SerialQueue();
-  const codex = new CodexSession(config);
-  await codex.healthcheck();
+  const session = createAgentSession(config);
+  console.log(`[app] backend=${config.agentBackend}`);
+  await session.healthcheck();
 
   const launches: Promise<void>[] = [];
 
@@ -29,7 +30,7 @@ async function main(): Promise<void> {
       );
     } else {
       launches.push(
-        new TelegramBridge(config, codex, queue)
+        new TelegramBridge(config, session, queue)
           .launch()
           .catch((err) =>
             console.error("[telegram] failed to start", formatErrorMessage(err)),
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
       console.log("[gmail] skipped — missing GMAIL_TO");
     } else {
       launches.push(
-        new GmailBridge(config, codex, queue)
+        new GmailBridge(config, session, queue)
           .launch()
           .catch((err) =>
             console.error("[gmail] failed to start", formatErrorMessage(err)),

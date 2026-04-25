@@ -1,0 +1,7 @@
+prefix_rule(pattern=["node", ".opencode/skills/web-access/scripts/check-deps.mjs"], decision="allow")
+prefix_rule(pattern=["curl", "-s", "http://127.0.0.1:3456/new?url="], decision="allow")
+prefix_rule(pattern=["curl", "-s", "http://127.0.0.1:3456/targets"], decision="allow")
+prefix_rule(pattern=["curl", "-s", "http://127.0.0.1:3456/info?target="], decision="allow")
+prefix_rule(pattern=["curl", "-s", "-X", "POST", "http://127.0.0.1:3456/eval?target="], decision="allow")
+prefix_rule(pattern=["curl", "-s", "http://127.0.0.1:3456/screenshot?target="], decision="allow")
+prefix_rule(pattern=["curl", "-s", "http://127.0.0.1:3456/close?target="], decision="allow")

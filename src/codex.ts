@@ -1,17 +1,11 @@
 import { Codex, type Thread, type ThreadOptions } from "@openai/codex-sdk";
 
 import type { AppConfig, PersistedState } from "./types.js";
+import type { AgentSession, TurnInput } from "./session.js";
+import { getBackendSessionMap, setBackendSessionMap } from "./session-state.js";
 import { StateStore } from "./state.js";
 
-export interface TurnInput {
-  text: string;
-  senderName: string;
-  chatTitle?: string;
-  timestamp: Date;
-  sessionKey?: string;
-}
-
-export class CodexSession {
+export class CodexSession implements AgentSession {
   private readonly client: Codex;
   private readonly stateStore: StateStore;
   private readonly threadPromises = new Map<string, Promise<Thread>>();
@@ -52,7 +46,8 @@ export class CodexSession {
 
   private async loadOrCreateThread(sessionKey: string): Promise<Thread> {
     const state = await this.loadState();
-    const threadId = state.sessions?.[sessionKey];
+    const sessions = getBackendSessionMap(state, "codex");
+    const threadId = sessions[sessionKey];
     const options = buildThreadOptions(this.config);
 
     if (threadId) {
@@ -69,11 +64,11 @@ export class CodexSession {
     if (!threadId) return;
 
     const state = await this.loadState();
-    const sessions = state.sessions || {};
+    const sessions = getBackendSessionMap(state, "codex");
     if (sessions[sessionKey] === threadId) return;
 
     sessions[sessionKey] = threadId;
-    await this.saveState({ ...state, sessions });
+    await this.saveState(setBackendSessionMap(state, "codex", sessions));
     console.log(`[codex] persisted ${sessionKey} thread ${threadId}`);
   }
 
@@ -104,6 +99,7 @@ function buildPromptBody(channel: string, input: TurnInput): string {
 
 function buildThreadOptions(config: AppConfig): ThreadOptions {
   return {
+    model: config.agentDefaultModel,
     workingDirectory: process.cwd(),
     approvalPolicy: config.codexApprovalPolicy,
     sandboxMode: config.codexSandboxMode,

@@ -3,7 +3,7 @@ import path from "node:path";
 
 import dotenv from "dotenv";
 
-import type { AppConfig } from "./types.js";
+import type { AgentBackend, AppConfig } from "./types.js";
 
 dotenv.config();
 
@@ -52,14 +52,27 @@ function dedupe(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
+function parseAgentBackend(raw: string | undefined): AgentBackend {
+  const value = (raw || "codex").trim().toLowerCase();
+  if (value === "codex" || value === "opencode") {
+    return value;
+  }
+  throw new Error("AGENT_BACKEND must be codex or opencode");
+}
+
 export function loadConfig(): AppConfig {
   const telegramBotToken =
     process.env.TELEGRAM_BOT_TOKEN?.trim() || "123456:replace-me";
   const telegramAllowedChatId = process.env.TELEGRAM_ALLOWED_CHAT_ID?.trim()
     ? parseChatId(process.env.TELEGRAM_ALLOWED_CHAT_ID)
     : 0;
+  const agentBackend = parseAgentBackend(process.env.AGENT_BACKEND);
 
   return {
+    agentBackend,
+    agentDefaultModel:
+      process.env.AGENT_DEFAULT_MODEL?.trim() || "gpt-5.4",
+    agentTurnTimeoutMs: Number(process.env.AGENT_TURN_TIMEOUT_MS) || 180000,
     telegramBotToken,
     telegramAllowedChatId,
     channels: parseChannels(process.env.CHANNELS),
@@ -97,6 +110,11 @@ export function loadConfig(): AppConfig {
     codexAdditionalDirectories: parseAdditionalDirectories(
       process.env.CODEX_ADDITIONAL_DIRS,
     ),
+    opencodeBaseUrl: process.env.OPENCODE_BASE_URL?.trim() || undefined,
+    opencodeServerUsername:
+      process.env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
+    opencodeServerPassword:
+      process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
     stateFile:
       process.env.STATE_FILE?.trim() || path.join(".data", "state.json"),
     gmailTo: process.env.GMAIL_TO?.trim() || undefined,

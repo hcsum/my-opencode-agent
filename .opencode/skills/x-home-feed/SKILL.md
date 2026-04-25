@@ -16,47 +16,27 @@ If browser access is not already ready, load `web-access` first
 Run:
 
 ```bash
-printf '%s' '{"limit":40}' | npx tsx .opencode/skills/x-home-feed/scripts/read-home.ts
+printf '%s' '{"limit":30}' | npx tsx .opencode/skills/x-home-feed/scripts/read-home.ts
 ```
 
 - The script returns JSON with `success`, `message`, and optional `data`.
 - If the proxy is unavailable, get `web-access` ready first, then retry.
 
-## Output format
-
-Default to a numbered list with moderate detail.
-
-- A short title line is fine when the user asked for a summary or report.
-- Use `1.` `2.` `3.` style numbering.
-- Each item can be 2-3 sentences when needed.
-- Prefer 4-7 items total.
-- Put the main signal first and lower-signal items later.
-- When you mention a representative post or account, include the original post URL.
-- Prefer inline links in the same bullet so the source is immediately visible.
-- Keep citations inline only when they materially help, for example a handle, product name, or original post link.
-- Prefer grouping similar posts under a shared theme instead of giving each post its own mini-summary.
-- When useful, classify signals by recommendation level first, then summarize within each bucket.
-
 ## How to summarize the home feed
 
-Do not just list posts. Synthesize the feed into a handful of clear takeaways:
-
-- the strongest themes or clusters
+- Quote the most representative posts when they add value
+- Look for clusters of similar posts, themes, or conversations that indicate a strong signal
+- Each item should reflect a distinct theme, topic, or signal that is genuinely present in the feed, not just a random assortment of posts
+- State what looks like real signal vs noise
 - what people seem excited about, worried about, or arguing about
-- recurring phrases, complaints, use cases, or requests
-- what looks like real signal vs noise
-- your interpretation only when it adds value
-
-Cover enough breadth to reflect the actual feed. It is fine to include several distinct themes if they are genuinely present.
-
-Include a few representative posts or accounts and keep them inside the numbered points.
+- Prefer 4-6 items total, with the most important ones first
+- When you mention a representative post or account, include the original post URL.
+- Prefer 1st hand information, such as authers posting about their own work, users sharing their direct experiences, or original content from creators, over hypes, rumors, or second-hand news. 
+- Cover enough breadth to reflect the actual feed. It is fine to include several distinct themes if they are genuinely present.
 
 ## Avoid
 
 - dumping a long list of posts with no synthesis
 - over-optimizing for brevity when the feed clearly has multiple important threads
 - creating too many section headers or turning the answer into a rigid newsletter template
-- treating a few loud posts as broad consensus
 - confusing engagement bait with meaningful signal
-- repeating the same conclusion across multiple bullets
-- letting lower-signal posts take too much space compared with the strongest signals
