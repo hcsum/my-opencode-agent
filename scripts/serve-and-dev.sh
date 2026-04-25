@@ -25,4 +25,14 @@ SERVE_PID=$!
 npm run dev &
 DEV_PID=$!
 
-wait -n "$SERVE_PID" "$DEV_PID"
+while true; do
+  if ! kill -0 "$SERVE_PID" 2>/dev/null; then
+    wait "$SERVE_PID" || true
+    break
+  fi
+  if ! kill -0 "$DEV_PID" 2>/dev/null; then
+    wait "$DEV_PID" || true
+    break
+  fi
+  sleep 1
+done
