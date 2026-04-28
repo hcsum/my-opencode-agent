@@ -5,13 +5,22 @@ import {
   createWorkflowJob,
   updateWorkflowJobStatus,
 } from "./db.js";
+import {
+  captureWikiSnapshot,
+  validateIngestResult,
+} from "./ingest-validator.js";
 import { OpencodeSession, type TurnInput } from "./opencode.js";
 import { SerialQueue } from "./queue.js";
-import type { WorkflowCommand, WorkflowJobKind } from "./types.js";
+import type {
+  IngestLanguageMode,
+  WorkflowCommand,
+  WorkflowJobKind,
+} from "./types.js";
 
 const COMMAND_PATTERN = /^\/(?:kb|wiki)\s+(ingest|query|lint)\b([\s\S]*)$/i;
 const WORKSPACE_ROOT = process.cwd();
 const KNOWLEDGE_SCHEMA_ROOT = path.join(WORKSPACE_ROOT, "knowledge", "schema");
+const DEFAULT_INGEST_LANGUAGE_MODE: IngestLanguageMode = "source-original-wiki-zh";
 
 interface WorkflowRequest {
   command: WorkflowCommand;
@@ -34,12 +43,15 @@ export class WorkflowRunner {
     if (!match) return null;
 
     const kind = match[1].toLowerCase() as WorkflowJobKind;
-    const target = match[2].trim();
+    const parsedTarget = match[2].trim();
+    const parsedIngest = kind === "ingest" ? parseIngestTarget(parsedTarget) : undefined;
+    const target = parsedIngest?.target || parsedTarget;
 
     const command: WorkflowCommand = {
       kind,
       target,
       rawText: trimmed,
+      ...(parsedIngest ? { ingestLanguageMode: parsedIngest.ingestLanguageMode } : {}),
     };
 
     if (kind === "ingest") {
@@ -75,18 +87,42 @@ export class WorkflowRunner {
       return await this.queue.enqueue(label, async () => {
         updateWorkflowJobStatus({ id: jobId, status: "running" });
 
+        const beforeSnapshot =
+          request.command.kind === "ingest" ? captureWikiSnapshot() : undefined;
+
         const response = await this.opencode.sendTurn(
           request.sourceChannel,
           buildWorkflowTurnInput(request, jobId),
         );
 
+        const validation =
+          request.command.kind === "ingest" && request.command.resolvedTarget && beforeSnapshot
+            ? validateIngestResult({
+                targetPath: request.command.resolvedTarget,
+                before: beforeSnapshot,
+                after: captureWikiSnapshot(),
+              })
+            : undefined;
+
+        if (validation && !validation.passed) {
+          throw new Error(
+            [
+              "Ingest validation failed.",
+              ...validation.errors,
+              ...validation.warnings.map((item) => `Warning: ${item}`),
+            ].join("\n"),
+          );
+        }
+
+        const finalResponse = appendValidationNotes(response, validation);
+
         updateWorkflowJobStatus({
           id: jobId,
           status: "completed",
-          resultSummary: summarizeResult(response),
+          resultSummary: summarizeResult(finalResponse),
         });
 
-        return `Workflow job #${jobId} (${request.command.kind}) completed.\n\n${response}`;
+        return `Workflow job #${jobId} (${request.command.kind}) completed.\n\n${finalResponse}`;
       });
     } catch (error) {
       updateWorkflowJobStatus({
@@ -100,7 +136,7 @@ export class WorkflowRunner {
 
   private usage(kind: WorkflowJobKind): string {
     if (kind === "ingest") {
-      return "Usage: /kb ingest <source path or source description>";
+      return "Usage: /kb ingest <source path> [--all-zh | --preserve-language]";
     }
     if (kind === "query") {
       return "Usage: /kb query <question about the wiki>";
@@ -132,6 +168,9 @@ function buildWorkflowTurnInput(
       "",
       workflowInstruction(command),
       "",
+      ...(command.kind === "ingest"
+        ? [languagePolicyBlock(command.ingestLanguageMode || DEFAULT_INGEST_LANGUAGE_MODE), ""]
+        : []),
       workflowGuardrails(command),
       "",
       schemaReferenceBlock(command),
@@ -156,6 +195,7 @@ function workflowInstruction(command: WorkflowCommand): string {
       "This workflow was explicitly triggered by code after the user requested an ingest operation.",
       "Treat the request as a source-ingest task: inspect the resolved local source path, update the persistent wiki, refresh index/log if needed, and report what pages changed.",
       "The goal is not a loose summary. The goal is a grounded wiki update that preserves source-specific frameworks, formulas, execution steps, and reusable concepts.",
+      "Follow the language policy for this ingest exactly.",
       "Do not debate whether ingest should be triggered; it already has been.",
     ].join(" ");
   }
@@ -178,6 +218,49 @@ function workflowInstruction(command: WorkflowCommand): string {
 function summarizeResult(text: string): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.slice(0, 280);
+}
+
+function appendValidationNotes(
+  response: string,
+  validation:
+    | ReturnType<typeof validateIngestResult>
+    | undefined,
+): string {
+  if (!validation) {
+    return response;
+  }
+
+  const notes = [
+    "Validation:",
+    `- ${validation.summary}`,
+    ...validation.warnings.map((item) => `- Warning: ${item}`),
+  ].join("\n");
+
+  return [response.trim(), notes].filter(Boolean).join("\n\n");
+}
+
+function languagePolicyBlock(mode: IngestLanguageMode): string {
+  if (mode === "all-zh") {
+    return [
+      "Language policy:",
+      "- Write source pages, concept pages, synthesis pages, and reports in Chinese.",
+      "- Preserve important original-language terms inline when translation would blur meaning.",
+    ].join("\n");
+  }
+
+  if (mode === "preserve-language") {
+    return [
+      "Language policy:",
+      "- Keep source pages and all derived wiki pages in the same language as the source unless a term must stay bilingual for clarity.",
+    ].join("\n");
+  }
+
+  return [
+    "Language policy:",
+    "- Keep source pages in the same language as the source by default.",
+    "- Write concept pages, synthesis pages, and reports in Chinese by default.",
+    "- Preserve important original-language terms inline when translation would blur meaning.",
+  ].join("\n");
 }
 
 function workflowGuardrails(command: WorkflowCommand): string {
@@ -279,4 +362,30 @@ function resolveIngestTarget(target: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function parseIngestTarget(raw: string): {
+  target: string;
+  ingestLanguageMode: IngestLanguageMode;
+} {
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const kept: string[] = [];
+  let ingestLanguageMode = DEFAULT_INGEST_LANGUAGE_MODE;
+
+  for (const token of tokens) {
+    if (token === "--all-zh") {
+      ingestLanguageMode = "all-zh";
+      continue;
+    }
+    if (token === "--preserve-language") {
+      ingestLanguageMode = "preserve-language";
+      continue;
+    }
+    kept.push(token);
+  }
+
+  return {
+    target: kept.join(" ").trim(),
+    ingestLanguageMode,
+  };
 }

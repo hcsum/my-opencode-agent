@@ -12,6 +12,8 @@ export interface AppConfig {
 
 export type WorkflowJobKind = "ingest" | "query" | "lint";
 
+export type IngestLanguageMode = "source-original-wiki-zh" | "all-zh" | "preserve-language";
+
 export type WorkflowJobStatus =
   | "pending"
   | "running"
@@ -23,6 +25,7 @@ export interface WorkflowCommand {
   target: string;
   rawText: string;
   resolvedTarget?: string;
+  ingestLanguageMode?: IngestLanguageMode;
 }
 
 export interface PersistedState {

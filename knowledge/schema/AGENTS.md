@@ -22,6 +22,9 @@ This directory defines how the agent should maintain the persistent wiki under `
 - Update any related entity, concept, or synthesis pages when the source adds important information.
 - Preserve uncertainty and contradictions instead of flattening them.
 - Update `knowledge/wiki/index.md` and append a concise entry to `knowledge/wiki/log.md`.
+- Default language policy for ingest: keep source pages in the source language, while writing concept, synthesis, and report pages in Chinese.
+- If the user passes `--all-zh`, use Chinese for all derived wiki pages.
+- If the user passes `--preserve-language`, keep all derived wiki pages in the source language unless a bilingual term is needed for clarity.
 
 ## Query Rules
 
@@ -43,6 +46,7 @@ This directory defines how the agent should maintain the persistent wiki under `
 - Prefer concise, factual writing over conversational style.
 - Use internal links when referencing other wiki pages.
 - Keep raw evidence and synthesized conclusions distinguishable.
+- Preserve original-language terms inline when translation would blur meaning.
 
 ## Trigger Model
 

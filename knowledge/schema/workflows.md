@@ -7,6 +7,7 @@
 3. Update any affected entity, concept, or synthesis pages.
 4. Refresh `knowledge/wiki/index.md` if page inventory changed.
 5. Append an entry to `knowledge/wiki/log.md`.
+6. Apply the ingest language policy or any explicit command override such as `--all-zh` or `--preserve-language`.
 
 ## Query
 
