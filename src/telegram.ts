@@ -3,9 +3,11 @@ import { Telegraf } from "telegraf";
 import type { AppConfig } from "./types.js";
 import { SerialQueue } from "./queue.js";
 import { OpencodeSession } from "./opencode.js";
+import { WorkflowRunner } from "./workflow.js";
 
 export class TelegramBridge {
   private readonly bot: Telegraf;
+  private readonly workflow: WorkflowRunner;
 
   constructor(
     private readonly config: AppConfig,
@@ -13,6 +15,7 @@ export class TelegramBridge {
     private readonly queue: SerialQueue,
   ) {
     this.bot = new Telegraf(config.telegramBotToken);
+    this.workflow = new WorkflowRunner(opencode, queue);
     this.registerHandlers();
   }
 
@@ -54,22 +57,35 @@ export class TelegramBridge {
       const label = `chat=${chatId} from=${senderName}`;
       console.log(`[telegram] enqueue ${label}; queued=${this.queue.size}`);
 
+      const workflowCommand = this.workflow.parse(text);
+
       try {
-        const result = await this.queue.enqueue(label, async () => {
-          const startedAt = Date.now();
-          const response = await this.opencode.sendTurn("telegram", {
-            text,
-            senderName,
-            chatTitle: "title" in ctx.chat ? ctx.chat.title : undefined,
-            timestamp: new Date(
-              (ctx.message.date ?? Math.floor(Date.now() / 1000)) * 1000,
-            ),
-          });
-          console.log(
-            `[telegram] completed ${label} in ${Date.now() - startedAt}ms`,
-          );
-          return response;
-        });
+        const result = workflowCommand
+          ? await this.workflow.run({
+              command: workflowCommand,
+              sourceChannel: "telegram",
+              sourceSession: String(chatId),
+              senderName,
+              chatTitle: "title" in ctx.chat ? ctx.chat.title : undefined,
+              timestamp: new Date(
+                (ctx.message.date ?? Math.floor(Date.now() / 1000)) * 1000,
+              ),
+            })
+          : await this.queue.enqueue(label, async () => {
+              const startedAt = Date.now();
+              const response = await this.opencode.sendTurn("telegram", {
+                text,
+                senderName,
+                chatTitle: "title" in ctx.chat ? ctx.chat.title : undefined,
+                timestamp: new Date(
+                  (ctx.message.date ?? Math.floor(Date.now() / 1000)) * 1000,
+                ),
+              });
+              console.log(
+                `[telegram] completed ${label} in ${Date.now() - startedAt}ms`,
+              );
+              return response;
+            });
 
         for (const chunk of splitTelegramMessage(result)) {
           await ctx.reply(chunk, {

@@ -3,6 +3,8 @@ import path from "node:path";
 
 import BetterSqlite3 from "better-sqlite3";
 
+import type { WorkflowJobKind, WorkflowJobStatus } from "./types.js";
+
 const DB_DIR = ".data";
 const DB_PATH = path.join(DB_DIR, "gmail.db");
 const CLAIM_TTL_MS = 15 * 60 * 1000;
@@ -57,6 +59,76 @@ export function markProcessed(
   releaseClaim(gmailMessageId);
 }
 
+export function createWorkflowJob(params: {
+  kind: WorkflowJobKind;
+  sourceChannel: string;
+  sourceSession: string;
+  triggerText: string;
+  target: string;
+}): number {
+  const result = db
+    .prepare(
+      `INSERT INTO workflow_jobs (
+        kind,
+        source_channel,
+        source_session,
+        trigger_text,
+        target,
+        status
+      ) VALUES (?, ?, ?, ?, ?, 'pending')`,
+    )
+    .run(
+      params.kind,
+      params.sourceChannel,
+      params.sourceSession,
+      params.triggerText,
+      params.target,
+    );
+
+  return Number(result.lastInsertRowid);
+}
+
+export function updateWorkflowJobStatus(params: {
+  id: number;
+  status: WorkflowJobStatus;
+  error?: string;
+  resultSummary?: string;
+}): void {
+  const nowExpr = "datetime('now')";
+
+  if (params.status === "running") {
+    db.prepare(
+      `UPDATE workflow_jobs
+       SET status = ?, started_at = ${nowExpr}, error = NULL
+       WHERE id = ?`,
+    ).run(params.status, params.id);
+    return;
+  }
+
+  if (params.status === "completed") {
+    db.prepare(
+      `UPDATE workflow_jobs
+       SET status = ?, finished_at = ${nowExpr}, result_summary = ?, error = NULL
+       WHERE id = ?`,
+    ).run(params.status, params.resultSummary || "", params.id);
+    return;
+  }
+
+  if (params.status === "failed") {
+    db.prepare(
+      `UPDATE workflow_jobs
+       SET status = ?, finished_at = ${nowExpr}, error = ?
+       WHERE id = ?`,
+    ).run(params.status, params.error || "Unknown workflow failure", params.id);
+    return;
+  }
+
+  db.prepare("UPDATE workflow_jobs SET status = ? WHERE id = ?").run(
+    params.status,
+    params.id,
+  );
+}
+
 function createSchema(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS processed_messages (
@@ -70,6 +142,21 @@ function createSchema(): void {
     CREATE TABLE IF NOT EXISTS message_claims (
       gmail_message_id TEXT PRIMARY KEY,
       claimed_at_ms INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      source_channel TEXT NOT NULL,
+      source_session TEXT NOT NULL,
+      trigger_text TEXT NOT NULL,
+      target TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      result_summary TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      started_at TEXT,
+      finished_at TEXT
     )
   `);
 }

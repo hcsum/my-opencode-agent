@@ -10,6 +10,7 @@ import type { OAuth2Client } from "google-auth-library";
 import type { AppConfig } from "./types.js";
 import { SerialQueue } from "./queue.js";
 import { OpencodeSession } from "./opencode.js";
+import { WorkflowRunner } from "./workflow.js";
 import {
   isProcessed,
   markProcessed,
@@ -29,6 +30,7 @@ export class GmailBridge {
   private gmail: gmail_v1.Gmail | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly threadMeta = new Map<string, ThreadMeta>();
+  private readonly workflow: WorkflowRunner;
   private consecutiveErrors = 0;
   private userEmail = "";
 
@@ -36,7 +38,9 @@ export class GmailBridge {
     private readonly config: AppConfig,
     private readonly opencode: OpencodeSession,
     private readonly queue: SerialQueue,
-  ) {}
+  ) {
+    this.workflow = new WorkflowRunner(opencode, queue);
+  }
 
   async launch(): Promise<void> {
     this.setupProxy();
@@ -203,26 +207,38 @@ export class GmailBridge {
 
     try {
       const queuedAt = Date.now();
-      const result = await this.queue.enqueue(
-        `gmail from=${senderEmail} subject=${subject}`,
-        async () => {
-          const opencodeStartedAt = Date.now();
-          const response = await this.opencode.sendTurn("gmail", {
-            text: content,
+      const workflowCommand = this.workflow.parse(textBody);
+      const result = workflowCommand
+        ? await this.workflow.run({
+            command: workflowCommand,
+            sourceChannel: "gmail",
+            sourceSession: threadId,
             senderName,
             chatTitle: subject,
             timestamp: new Date(
               parseInt(message.internalDate || String(Date.now()), 10),
             ),
-            sessionKey: `gmail:${threadId}`,
-            sessionTitle: `Gmail ${subject}`,
-          });
-          console.log(
-            `[gmail] opencode completed ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
+          })
+        : await this.queue.enqueue(
+            `gmail from=${senderEmail} subject=${subject}`,
+            async () => {
+              const opencodeStartedAt = Date.now();
+              const response = await this.opencode.sendTurn("gmail", {
+                text: content,
+                senderName,
+                chatTitle: subject,
+                timestamp: new Date(
+                  parseInt(message.internalDate || String(Date.now()), 10),
+                ),
+                sessionKey: `gmail:${threadId}`,
+                sessionTitle: `Gmail ${subject}`,
+              });
+              console.log(
+                `[gmail] opencode completed ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
+              );
+              return response;
+            },
           );
-          return response;
-        },
-      );
 
       console.log(
         `[gmail] queue+opencode completed ${messageId} in ${Date.now() - queuedAt}ms`,

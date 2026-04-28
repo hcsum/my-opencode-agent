@@ -34,6 +34,7 @@ export interface TurnInput {
   timestamp: Date;
   sessionKey?: string;
   sessionTitle?: string;
+  sessionDirectory?: string;
 }
 
 const CHANNEL_SESSION_TITLES: Record<string, string> = {
@@ -134,6 +135,9 @@ export class OpencodeSession {
 
     const session = await this.unwrap<SessionRecord>(
       this.client.session.create({
+        query: input.sessionDirectory
+          ? { directory: input.sessionDirectory }
+          : undefined,
         body: { title },
       }),
     );

@@ -10,6 +10,21 @@ export interface AppConfig {
   gmailPollIntervalMs: number;
 }
 
+export type WorkflowJobKind = "ingest" | "query" | "lint";
+
+export type WorkflowJobStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed";
+
+export interface WorkflowCommand {
+  kind: WorkflowJobKind;
+  target: string;
+  rawText: string;
+  resolvedTarget?: string;
+}
+
 export interface PersistedState {
   sessionId?: string;
   sessions?: Record<string, string>;
