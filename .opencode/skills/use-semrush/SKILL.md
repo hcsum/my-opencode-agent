@@ -1,6 +1,6 @@
 ---
 name: use-semrush
-description: Get SEO data for any provided website or keyword. 
+description: Get SEO data for any provided website or keyword on Semrush. 
 ---
 
 ## Prerequisite
