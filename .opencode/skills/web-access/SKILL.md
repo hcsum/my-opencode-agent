@@ -2,9 +2,7 @@
 name: web-access
 license: MIT
 github: https://github.com/eze-is/web-access
-description:
-  所有联网操作必须通过此 skill 处理，包括：搜索、网页抓取、登录后操作、网络交互等。
-  触发场景：用户要求搜索信息、查看网页内容、访问需要登录的网站、操作网页界面、抓取社交媒体内容（小红书、微博、推特等）、读取动态渲染页面、以及任何需要真实浏览器环境的网络任务。
+description: 所有联网操作必须通过此 skill 处理，包括：搜索、网页抓取、登录后操作、网络交互等。
 metadata:
   author: 一泽Eze
   version: "2.6.0"
@@ -21,11 +19,19 @@ metadata:
 
 如果用户未明确指定，再进入浏览器模式引导。不能只让用户做二选一，必须先讲清差异、收益和代价。
 
-默认先运行自动检查命令（同时检查主力与专用 profile）：
+默认先运行自动检查命令：
 
 ```bash
-node .opencode/skills/web-access/scripts/check-deps.mjs
+# The script path is relative to this skill's base directory printed by the skill tool.
+node ./scripts/check-deps.mjs
 ```
+
+脚本输出约定：
+
+- `check-deps.mjs` 始终输出单个 JSON 对象，不输出文本日志。
+- 先读取 `ok` 判断成功或失败，再读取 `selectedMode`、`browserId`、`port`、`proxyReady`、`availableModes`、`selectedBecause` 等字段。
+- 失败时读取 `reason` 和 `guidance`，不要依赖类似 `browser: ok`、`proxy: ready` 这类文本。
+- `sitePatterns` 字段列出当前已有的站点经验文件名。
 
 自动检查行为：
 
@@ -55,15 +61,16 @@ open -na "<Browser App Name>" --args \
 然后运行：
 
 ```bash
-node .opencode/skills/web-access/scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
+node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
 ```
 
-一旦已经选定专用浏览器，后续所有检查和连接都必须继续带上 `--browser dedicated --browser-id <browser-id>`，不要再运行默认检查命令，否则流程可能被带回主力浏览器路径。
+一旦已经选定专用浏览器，后续所有检查和连接都必须继续带上 `--browser dedicated --browser-id <browser-id>`，不要再运行默认检查命令，否则流程会重新进入自动选路。
 
 补充约束：
 
 - **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
 - 自动检查不做跨 session 偏好记忆；依据当前可用连接实时判断（主力 `DevToolsActivePort` + `~/.web-access/*-dedicated-profile`）。
+- 自动检查只根据 `DevToolsActivePort` 判断连接状态，不扫描硬编码端口。
 
 ## 浏览哲学
 
@@ -108,7 +115,7 @@ node .opencode/skills/web-access/scripts/check-deps.mjs --browser dedicated --br
 用户指向**本人访问过的页面**（"我之前看的那个讲 X 的文章"、"上次打开过的 XX 面板"）或**组织内部系统**（"我们的 XX 平台"、"公司那个 YY 系统"等公网搜不到的目标）时，检索本地 Chrome 书签/历史：
 
 ```bash
-node .opencode/skills/web-access/scripts/find-url.mjs [关键词...] [--only bookmarks|history] [--limit N] [--since 1d|7h|YYYY-MM-DD] [--sort recent|visits]
+node ./scripts/find-url.mjs [关键词...] [--only bookmarks|history] [--limit N] [--since 1d|7h|YYYY-MM-DD] [--sort recent|visits]
 ```
 
 关键词空格分词、多词 AND，匹配 title + url（可省略）；`--since` / `--sort` 仅作用于历史；默认按最近访问倒序，`--sort visits` 按访问次数排序（适合"高频访问的网站"这类场景）。
@@ -174,19 +181,31 @@ node .opencode/skills/web-access/scripts/find-url.mjs [关键词...] [--only boo
 
 ### 启动
 
-主力浏览器路径：
+自动选择路径：
 
 ```bash
-node .opencode/skills/web-access/scripts/check-deps.mjs
+node ./scripts/check-deps.mjs
+```
+
+返回的 JSON 中：
+
+- `selectedMode: "primary"` 表示当前选中了主力浏览器。
+- `selectedMode: "dedicated"` 表示当前选中了专用浏览器。
+- 默认命令不是“固定走主力浏览器”，而是自动在可用连接里选择；两者都可用时优先 dedicated。
+
+显式主力浏览器路径：
+
+```bash
+node ./scripts/check-deps.mjs --browser primary
 ```
 
 专用浏览器路径：
 
 ```bash
-node .opencode/skills/web-access/scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
+node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
 ```
 
-脚本会依次检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。
+脚本会检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。所有检查结果都在 JSON 字段里返回。
 
 ### Proxy API
 
@@ -271,28 +290,6 @@ curl -s "http://localhost:3456/close?target=ID"
 用 `/close` 关闭自己创建的 tab，必须保留用户原有的 tab 不受影响。
 
 Proxy 持续运行，不建议主动停止——重启后需要在浏览器中重新授权 CDP 连接。
-
-## 并行调研：子 Agent 分治策略
-
-任务包含多个**独立**调研目标时（如同时调研 N 个项目、N 个来源），鼓励合理分治给子 Agent 并行执行，而非主 Agent 串行处理。
-
-**好处：**
-- **速度**：多子 Agent 并行，总耗时约等于单个子任务时长
-- **上下文保护**：抓取内容不进入主 Agent 上下文，主 Agent 只接收摘要，节省 token
-
-**并行 CDP 操作**：每个子 Agent 在当前浏览器实例中，自行创建所需的后台 tab（`/new`），自行操作，任务结束自行关闭（`/close`）。所有子 Agent 共享一个 Chromium 浏览器实例和一个 Proxy，通过不同 targetId 操作不同 tab，无竞态风险。
-
-**子 Agent Prompt 写法：目标导向，而非步骤指令**
-- 必须在子 Agent prompt 中写 `必须加载 web-access skill 并遵循指引`，子 Agent 会自动加载 skill，无需在 prompt 中复制 skill 内容或指定路径。
-- 子 Agent 有自主判断能力。主 Agent 的职责是说清楚**要什么**，仅在必要与确信时限定**怎么做**。过度指定步骤会剥夺子 Agent 的判断空间，反而引入主 Agent 的假设错误。**避免 prompt 用词对子 Agent 行为的暗示**：「搜索xx」会把子 Agent 锚定到 WebSearch，而实际上有些反爬站点需要 CDP 直接访问主站才能有效获取内容。主 Agent 写 prompt 时应描述目标（「获取」「调研」「了解」），避免用暗示具体手段的动词（「搜索」「抓取」「爬取」）。
-
-**分治判断标准：**
-
-| 适合分治 | 不适合分治 |
-|----------|-----------|
-| 目标相互独立，结果互不依赖 | 目标有依赖关系，下一个需要上一个的结果 |
-| 每个子任务量足够大（多页抓取、多轮搜索） | 简单单页查询，分治开销大于收益 |
-| 需要 CDP 浏览器或长时间运行的任务 | 几次 WebSearch / Jina 就能完成的轻量查询 |
 
 ## 信息核实类任务
 

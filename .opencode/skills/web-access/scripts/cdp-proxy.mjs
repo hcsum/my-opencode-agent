@@ -99,20 +99,6 @@ async function discoverChromePort(mode = 'primary') {
     } catch { /* 文件不存在，继续 */ }
   }
 
-  if (mode === 'dedicated') {
-    return null;
-  }
-
-  // 2. 扫描常用端口
-  const commonPorts = [9222, 9229, 9333];
-  for (const port of commonPorts) {
-    const ok = await checkPort(port);
-    if (ok) {
-      console.log(`[CDP Proxy] 扫描发现浏览器调试端口: ${port}`);
-      return { port, wsPath: null };
-    }
-  }
-
   return null;
 }
 

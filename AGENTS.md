@@ -38,8 +38,6 @@ Assist user to achieve his goals. Don't just advise user what to do. With all th
 
 - Always use a headed browser for `web-access` browser work; never switch to headless methods.
 - When need to visit a sub page of a website, NEVER guess the URL, always get the URL from the page, or click the page element
-- For local browser/CDP workflows, do not run commands in sandbox first. Any command involving `check-deps.mjs`, `find-url.mjs`, `127.0.0.1:<port>`, `localhost:3456`, or browser remote debugging must be run directly in host environment.
-- Do not use "try sandbox first, then switch to host if it fails" as the default workflow for `web-access`. Start in host environment for local browser/CDP tasks.
 
 ## File Writing Rules
 
