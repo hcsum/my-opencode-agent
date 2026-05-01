@@ -1,11 +1,7 @@
 ---
 name: x-home-feed
-description: Read and summarize your X home feed for trends, themes, sentiment, and signal detection.
+description: Read and summarize user's X (formerly Twitter) home feed
 ---
-
-# X Home Feed
-
-Use this when the user wants to inspect or summarize what is showing up in their X home feed.
 
 ## Prerequisite
 
@@ -20,23 +16,19 @@ printf '%s' '{"limit":30}' | npx tsx .opencode/skills/x-home-feed/scripts/read-h
 ```
 
 - The script returns JSON with `success`, `message`, and optional `data`.
-- If the proxy is unavailable, get `web-access` ready first, then retry.
 
 ## How to summarize the home feed
 
-- Quote the most representative posts when they add value
-- Look for clusters of similar posts, themes, or conversations that indicate a strong signal
-- Each item should reflect a distinct theme, topic, or signal that is genuinely present in the feed, not just a random assortment of posts
-- State what looks like real signal vs noise
-- what people seem excited about, worried about, or arguing about
-- Prefer 4-6 items total, with the most important ones first
+### Do
+- look for useful topics, such as new features, popular discussions, or emerging trends
+- look for what people seem excited about, worried about, or arguing about
+- quote the most representative posts of the current feed if applicable
+- If the feed posts form certain themes or clusters, organize the summary around those themes instead of just listing posts one by one
 - When you mention a representative post or account, include the original post URL.
-- Prefer 1st hand information, such as authers posting about their own work, users sharing their direct experiences, or original content from creators, over hypes, rumors, or second-hand news. 
-- Cover enough breadth to reflect the actual feed. It is fine to include several distinct themes if they are genuinely present.
+- If nothing interesting is found in the feed, it is ok. Don't force to find or claim something is interesting.
 
-## Avoid
+### Avoid
+- shallow claims or opinions that are not supported by the post content
+- 2nd hand information that is not directly evident from the feed, such as "people are excited about X" without showing any posts that demonstrate that excitement
 
-- dumping a long list of posts with no synthesis
-- over-optimizing for brevity when the feed clearly has multiple important threads
-- creating too many section headers or turning the answer into a rigid newsletter template
-- confusing engagement bait with meaningful signal
+

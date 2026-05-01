@@ -42,9 +42,3 @@ printf '%s' '{"action":"messages","query":"外链","group":"哥飞的朋友们 7
 5. It scrolls and loads more history up to `maxLoads` times (default 5)
 6. If no exact matches are found, it returns loaded chat messages so you can summarize what was discussed
 
-## Script Lifecycle
-
-- The browse script automatically opens a background tab, performs the action, and closes the tab in its finally block
-- No manual tab cleanup is needed
-- This skill only supports `search`, `open`, and `messages`
-- Use `web-access` when you need to read article正文、图片或处理页面异常

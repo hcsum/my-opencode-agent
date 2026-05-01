@@ -9,6 +9,88 @@ interface PromptPart {
   [key: string]: unknown;
 }
 
+interface AssistantMessageInfo {
+  id: string;
+  role: string;
+  sessionID: string;
+  parentID?: string;
+  finish?: string;
+  time?: {
+    created?: number;
+    completed?: number;
+  };
+  error?: unknown;
+}
+
+interface PermissionRequest {
+  id: string;
+  type: string;
+  pattern?: string | string[];
+  sessionID: string;
+  messageID: string;
+  title: string;
+  time?: {
+    created?: number;
+  };
+}
+
+interface SessionMessageListEntry {
+  info: AssistantMessageInfo;
+  parts?: PromptPart[];
+}
+
+interface OutcomeTracker {
+  latestAssistantMessageId?: string;
+  latestAssistantCreatedAt?: number;
+  expectedMessageId?: string;
+}
+
+interface StreamEventPayload {
+  type: string;
+  properties: Record<string, unknown>;
+}
+
+interface ToolPartEvent {
+  type: "tool";
+  tool: string;
+  state: {
+    status: "pending" | "running" | "completed" | "error";
+    title?: string;
+    error?: string;
+  };
+}
+
+interface TextPartEvent {
+  type: "text";
+  text: string;
+  metadata?: {
+    openai?: {
+      phase?: string;
+    };
+  };
+}
+
+export type PermissionResponse = "once" | "always" | "reject";
+
+const OPENCODE_COMPLETION_POLL_MS = 3000;
+
+export type TurnOutcome =
+  | {
+      kind: "completed";
+      text: string;
+    }
+  | {
+      kind: "permission";
+      permission: {
+        sessionId: string;
+        permissionId: string;
+        messageId: string;
+        title: string;
+        type: string;
+        pattern: string;
+      };
+    };
+
 interface SessionRecord {
   id: string;
 }
@@ -90,6 +172,49 @@ export class OpencodeSession {
     return extractText(response.parts) || "No response text returned.";
   }
 
+  async sendTurnWithApproval(
+    channel: string,
+    input: TurnInput,
+  ): Promise<TurnOutcome> {
+    const sessionId = await this.getOrCreateSessionId(channel, input);
+    const body = buildPromptBody(channel, input);
+
+    return this.waitForOutcome(sessionId, async () => {
+      await this.ensureSuccess(
+        this.client.session.promptAsync({
+          path: { id: sessionId },
+          body: {
+            model: HARDCODED_MODEL,
+            parts: [{ type: "text", text: body }],
+          },
+        }),
+      );
+    });
+  }
+
+  async resolvePermission(
+    sessionId: string,
+    permissionId: string,
+    messageId: string,
+    response: PermissionResponse,
+  ): Promise<TurnOutcome> {
+    return this.waitForOutcome(
+      sessionId,
+      async () => {
+        await this.ensureSuccess(
+          this.client.postSessionIdPermissionsPermissionId({
+            path: {
+              id: sessionId,
+              permissionID: permissionId,
+            },
+            body: { response },
+          }),
+        );
+      },
+      messageId,
+    );
+  }
+
   private async getOrCreateSessionId(
     channel: string,
     input: TurnInput,
@@ -160,15 +285,245 @@ export class OpencodeSession {
     await this.stateStore.save(state);
   }
 
-  private async unwrap<T>(promise: Promise<ApiResult<T>>): Promise<T> {
-    const result = await promise;
-    if (result.error) {
-      throw new Error(extractErrorMessage(result.error));
+  private async waitForOutcome(
+    sessionId: string,
+    trigger: () => Promise<void>,
+    expectedMessageId?: string,
+  ): Promise<TurnOutcome> {
+    const controller = new AbortController();
+    const stream = await this.client.event.subscribe({ signal: controller.signal });
+    const tracker: OutcomeTracker = { expectedMessageId };
+    const loggedToolStates = new Map<string, string>();
+    const loggedTextParts = new Set<string>();
+    const startedAt = Date.now();
+    let lastPolledAt = startedAt;
+
+    try {
+      await trigger();
+
+      for await (const rawEvent of stream.stream) {
+        if (Date.now() - lastPolledAt >= OPENCODE_COMPLETION_POLL_MS) {
+          const polled = await this.pollForCompletedOutcome(
+            sessionId,
+            tracker,
+            startedAt,
+          );
+          lastPolledAt = Date.now();
+          if (polled) return polled;
+        }
+
+        const payload = rawEvent as unknown as StreamEventPayload;
+
+        if (payload.type === "permission.updated") {
+          const permission = payload.properties as unknown as PermissionRequest;
+          if (permission.sessionID !== sessionId) continue;
+          if (!isRelevantPermission(permission, tracker, startedAt)) {
+            continue;
+          }
+
+          return {
+            kind: "permission",
+            permission: {
+              sessionId: permission.sessionID,
+              permissionId: permission.id,
+              messageId: permission.messageID,
+              title: permission.title,
+              type: permission.type,
+              pattern: normalizePattern(permission.pattern),
+            },
+          };
+        }
+
+        if (payload.type === "message.updated") {
+          const info = (payload.properties as { info?: AssistantMessageInfo }).info;
+          if (!info || info.role !== "assistant" || info.sessionID !== sessionId) {
+            continue;
+          }
+
+          if (!isRelevantAssistantMessage(info, tracker, startedAt)) continue;
+
+          updateOutcomeTracker(tracker, info);
+          if (!info.time?.completed && !info.error) continue;
+          if (!isTerminalAssistantMessage(info)) continue;
+
+          return this.readAssistantMessage(sessionId, info.id);
+        }
+
+        if (payload.type === "message.part.updated") {
+          const part = (payload.properties as { part?: unknown }).part;
+          if (!part || typeof part !== "object") continue;
+
+          const sessionPart = part as {
+            sessionID?: string;
+            messageID?: string;
+            time?: { start?: number };
+          };
+          if (sessionPart.sessionID !== sessionId) continue;
+          if (!isRelevantPart(sessionPart, tracker, startedAt)) continue;
+
+          this.logProgressPart(
+            part as ToolPartEvent | TextPartEvent,
+            loggedToolStates,
+            loggedTextParts,
+          );
+          continue;
+        }
+
+        if (payload.type === "session.error") {
+          const properties = payload.properties as {
+            sessionID?: string;
+            error?: unknown;
+          };
+          if (properties.sessionID && properties.sessionID !== sessionId) continue;
+          throw new Error(extractErrorMessage(properties.error));
+        }
+      }
+
+      const finalPolled = await this.pollForCompletedOutcome(
+        sessionId,
+        tracker,
+        startedAt,
+      );
+      if (finalPolled) return finalPolled;
+
+      throw new Error("OpenCode event stream ended before the session completed");
+    } finally {
+      controller.abort();
     }
+  }
+
+  private logProgressPart(
+    part: ToolPartEvent | TextPartEvent,
+    loggedToolStates: Map<string, string>,
+    loggedTextParts: Set<string>,
+  ): void {
+    if (part.type === "tool") {
+      const label = part.state.title?.trim() || part.tool;
+      const nextState = part.state.status;
+      const key = `${part.tool}:${label}`;
+
+      if (loggedToolStates.get(key) === nextState) return;
+      loggedToolStates.set(key, nextState);
+
+      if (nextState === "running") {
+        console.log(`[opencode] tool running: ${label}`);
+        return;
+      }
+
+      if (nextState === "completed") {
+        console.log(`[opencode] tool completed: ${label}`);
+        return;
+      }
+
+      if (nextState === "error") {
+        console.log(
+          `[opencode] tool failed: ${label}${part.state.error ? ` - ${part.state.error}` : ""}`,
+        );
+      }
+      return;
+    }
+
+    if (part.type !== "text") return;
+    if (part.metadata?.openai?.phase !== "commentary") return;
+
+    const text = part.text.trim();
+    if (!text || loggedTextParts.has(text)) return;
+    loggedTextParts.add(text);
+    console.log(`[opencode] ${text}`);
+  }
+
+  private async readAssistantMessage(
+    sessionId: string,
+    messageId: string,
+  ): Promise<TurnOutcome> {
+    const response = await this.unwrap<{
+      info: AssistantMessageInfo;
+      parts?: PromptPart[];
+    }>(
+      this.client.session.message({
+        path: {
+          id: sessionId,
+          messageID: messageId,
+        },
+      }),
+    );
+
+    if (response.info.error) {
+      throw new Error(extractErrorMessage(response.info.error));
+    }
+
+    return {
+      kind: "completed",
+      text: extractText(response.parts) || "No response text returned.",
+    };
+  }
+
+  private async pollForCompletedOutcome(
+    sessionId: string,
+    tracker: OutcomeTracker,
+    startedAt: number,
+  ): Promise<TurnOutcome | undefined> {
+    const status = await this.unwrap<Record<string, { type?: string }>>(
+      this.client.session.status(),
+    );
+
+    const sessionStatus = status[sessionId]?.type;
+    if (sessionStatus && sessionStatus !== "idle") {
+      return undefined;
+    }
+
+    const messages = await this.unwrapMessages(
+      this.client.session.messages({
+        path: { id: sessionId },
+      }),
+    );
+
+    const latestAssistant = findLatestCompletedAssistantMessage(
+      messages,
+      tracker,
+      startedAt,
+    );
+
+    if (!latestAssistant) return undefined;
+
+    return this.readAssistantMessage(sessionId, latestAssistant.info.id);
+  }
+
+  private async unwrapMessages(
+    promise: Promise<ApiResult<unknown>>,
+  ): Promise<SessionMessageListEntry[]> {
+    const data = await this.unwrap<unknown>(promise);
+
+    if (Array.isArray(data)) {
+      return data as SessionMessageListEntry[];
+    }
+
+    if (
+      data &&
+      typeof data === "object" &&
+      "info" in data &&
+      Array.isArray((data as { info: unknown }).info)
+    ) {
+      return (data as { info: SessionMessageListEntry[] }).info;
+    }
+
+    return [];
+  }
+
+  private async unwrap<T>(promise: Promise<ApiResult<T>>): Promise<T> {
+    const result = await this.ensureSuccess(promise);
     if (result.data === undefined) {
       throw new Error("OpenCode request returned no data");
     }
     return result.data;
+  }
+
+  private async ensureSuccess<T>(promise: Promise<ApiResult<T>>): Promise<ApiResult<T>> {
+    const result = await promise;
+    if (result.error) {
+      throw new Error(extractErrorMessage(result.error));
+    }
+    return result;
   }
 
   private buildFetch(): (request: Request) => ReturnType<typeof fetch> {
@@ -217,9 +572,6 @@ function extractText(parts: PromptPart[] | undefined): string {
       if (part.type === "text" && typeof part.text === "string") {
         return part.text;
       }
-      if (typeof part.text === "string") {
-        return part.text;
-      }
       return "";
     })
     .filter(Boolean)
@@ -263,4 +615,122 @@ function logUsedModel(
     return;
   }
   console.log(`[opencode] model used: ${provider}/${model}`);
+}
+
+function normalizePattern(pattern: string | string[] | undefined): string {
+  if (!pattern) return "";
+  return Array.isArray(pattern) ? pattern.join(", ") : pattern;
+}
+
+function findLatestCompletedAssistantMessage(
+  messages: SessionMessageListEntry[],
+  tracker: OutcomeTracker,
+  startedAt: number,
+): SessionMessageListEntry | undefined {
+  const candidates = messages.filter((entry) => {
+    const info = entry.info;
+    if (info.role !== "assistant") return false;
+    if (!isRelevantAssistantMessage(info, tracker, startedAt)) return false;
+    return Boolean(info.time?.completed || info.error);
+  });
+
+  const terminalCandidates = candidates.filter((entry) =>
+    isTerminalAssistantMessage(entry.info),
+  );
+
+  const pool = terminalCandidates.length ? terminalCandidates : candidates;
+
+  return pool.sort((a, b) => {
+    const aTime = a.info.time?.completed || a.info.time?.created || 0;
+    const bTime = b.info.time?.completed || b.info.time?.created || 0;
+    return bTime - aTime;
+  })[0];
+}
+
+function isTerminalAssistantMessage(info: AssistantMessageInfo): boolean {
+  if (info.error) return true;
+  return info.finish === "stop";
+}
+
+function isRelevantPermission(
+  permission: PermissionRequest,
+  tracker: OutcomeTracker,
+  startedAt: number,
+): boolean {
+  if (typeof permission.time?.created === "number" && permission.time.created < startedAt) {
+    return false;
+  }
+
+  if (tracker.expectedMessageId && permission.messageID === tracker.expectedMessageId) {
+    return true;
+  }
+
+  if (tracker.latestAssistantMessageId && permission.messageID === tracker.latestAssistantMessageId) {
+    return true;
+  }
+
+  return !tracker.expectedMessageId;
+}
+
+function isRelevantAssistantMessage(
+  info: AssistantMessageInfo,
+  tracker: OutcomeTracker,
+  startedAt: number,
+): boolean {
+  if (typeof info.time?.created === "number" && info.time.created < startedAt) {
+    return false;
+  }
+
+  if (tracker.expectedMessageId && info.id === tracker.expectedMessageId) {
+    return true;
+  }
+
+  if (
+    tracker.latestAssistantCreatedAt !== undefined &&
+    typeof info.time?.created === "number" &&
+    info.time.created + 1 < tracker.latestAssistantCreatedAt
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function isRelevantPart(
+  part: { messageID?: string; time?: { start?: number } },
+  tracker: OutcomeTracker,
+  startedAt: number,
+): boolean {
+  if (typeof part.time?.start === "number" && part.time.start < startedAt) {
+    return false;
+  }
+
+  if (tracker.latestAssistantMessageId && part.messageID === tracker.latestAssistantMessageId) {
+    return true;
+  }
+
+  if (tracker.expectedMessageId && part.messageID === tracker.expectedMessageId) {
+    return true;
+  }
+
+  return tracker.latestAssistantMessageId === undefined && tracker.expectedMessageId === undefined;
+}
+
+function updateOutcomeTracker(
+  tracker: OutcomeTracker,
+  info: AssistantMessageInfo,
+): void {
+  const createdAt = info.time?.created;
+  if (typeof createdAt !== "number") {
+    tracker.latestAssistantMessageId = info.id;
+    return;
+  }
+
+  if (
+    tracker.latestAssistantCreatedAt === undefined ||
+    createdAt >= tracker.latestAssistantCreatedAt
+  ) {
+    tracker.latestAssistantCreatedAt = createdAt;
+    tracker.latestAssistantMessageId = info.id;
+  }
 }

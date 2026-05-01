@@ -1,6 +1,6 @@
 ---
 name: sitemap-monitor
-description: 拉取并对比 sitemap，记录新增页面 slug。
+description: 拉取并对比网站的sitemap，记录新增页面 slug。
 ---
 
 ## 用途

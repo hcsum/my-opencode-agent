@@ -52,7 +52,7 @@ If the type is unclear, ask one short clarification question instead of guessing
 
 - Write to `<current_working_directory>/notes/`
 - Use this for notes, saved research, summaries, references, quotes, reminders, or records the user wants preserved
-- Preserve the original meaning; organize it clearly
+- Preserve orginal content and details. Only remove content if you see repetition of similar ideas.
 - Include source information when available, such as URLs, quoted text, platform names, or where the information came from
 - Decide creating new files or appending to existing ones based on the content
 - If need to create a new file, name it with the topic of the content
@@ -69,6 +69,11 @@ If the type is unclear, ask one short clarification question instead of guessing
 - Never write user notes into `AGENTS.md`
 - Never write agent instructions into `notes/`
 - Never modify `notes/user.md` unless the user explicitly asks you to
+
+## Skill Authoring
+
+- When creating or updating any file under `.opencode/skills/`, always load the `skill-authoring` skill first and follow it instead of improvising the skill structure or wording.
+- Keep project-wide behavior for skill creation in this `AGENTS.md`, and keep detailed reusable skill-writing guidance inside the `skill-authoring` skill itself.
 
 ## Sub-Agent Divide & Conquer Strategy
 

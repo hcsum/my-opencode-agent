@@ -11,6 +11,16 @@ const CLAIM_TTL_MS = 15 * 60 * 1000;
 
 let db: BetterSqlite3.Database;
 
+export interface PendingPermissionRecord {
+  threadId: string;
+  sessionId: string;
+  permissionId: string;
+  messageId: string;
+  title: string;
+  type: string;
+  pattern: string;
+}
+
 export function initDatabase(): void {
   fs.mkdirSync(DB_DIR, { recursive: true });
   db = new BetterSqlite3(DB_PATH);
@@ -57,6 +67,84 @@ export function markProcessed(
   ).run(gmailMessageId, threadId, subject, sender);
 
   releaseClaim(gmailMessageId);
+}
+
+export function getPendingPermission(
+  threadId: string,
+): PendingPermissionRecord | undefined {
+  const row = db
+    .prepare(
+      `SELECT
+         thread_id,
+         session_id,
+         permission_id,
+         message_id,
+         title,
+         type,
+         pattern
+       FROM pending_permissions
+       WHERE thread_id = ?`,
+    )
+    .get(threadId) as
+    | {
+        thread_id: string;
+        session_id: string;
+        permission_id: string;
+        message_id: string;
+        title: string;
+        type: string;
+        pattern: string;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+
+  return {
+    threadId: row.thread_id,
+    sessionId: row.session_id,
+    permissionId: row.permission_id,
+    messageId: row.message_id,
+    title: row.title,
+    type: row.type,
+    pattern: row.pattern,
+  };
+}
+
+export function upsertPendingPermission(
+  permission: PendingPermissionRecord,
+): void {
+  db.prepare(
+    `INSERT INTO pending_permissions (
+       thread_id,
+       session_id,
+       permission_id,
+       message_id,
+       title,
+       type,
+       pattern,
+       updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(thread_id) DO UPDATE SET
+       session_id = excluded.session_id,
+       permission_id = excluded.permission_id,
+       message_id = excluded.message_id,
+       title = excluded.title,
+       type = excluded.type,
+       pattern = excluded.pattern,
+       updated_at = datetime('now')`,
+  ).run(
+    permission.threadId,
+    permission.sessionId,
+    permission.permissionId,
+    permission.messageId,
+    permission.title,
+    permission.type,
+    permission.pattern,
+  );
+}
+
+export function clearPendingPermission(threadId: string): void {
+  db.prepare("DELETE FROM pending_permissions WHERE thread_id = ?").run(threadId);
 }
 
 export function createWorkflowJob(params: {
@@ -157,6 +245,17 @@ function createSchema(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       started_at TEXT,
       finished_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS pending_permissions (
+      thread_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      permission_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      type TEXT NOT NULL DEFAULT '',
+      pattern TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
 }

@@ -372,10 +372,11 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(pages, null, 2));
     }
 
-    // GET /new?url=xxx - 创建新后台 tab
+    // GET /new?url=xxx - 创建新 tab
     else if (pathname === '/new') {
       const targetUrl = q.url || 'about:blank';
-      const resp = await sendCDP('Target.createTarget', { url: targetUrl, background: true });
+      const background = q.background !== 'false';
+      const resp = await sendCDP('Target.createTarget', { url: targetUrl, background });
       const targetId = resp.result.targetId;
 
       // 等待页面加载
@@ -383,6 +384,9 @@ const server = http.createServer(async (req, res) => {
         try {
           const sid = await ensureSession(targetId);
           await waitForLoad(sid);
+          if (!background) {
+            await sendCDP('Target.activateTarget', { targetId });
+          }
         } catch { /* 非致命，继续 */ }
       }
 
@@ -405,6 +409,14 @@ const server = http.createServer(async (req, res) => {
       await waitForLoad(sid);
 
       res.end(JSON.stringify(resp.result));
+    }
+
+    // GET /activate?target=xxx - 显式激活 tab 并 bring to front
+    else if (pathname === '/activate') {
+      const sid = await ensureSession(q.target);
+      await sendCDP('Target.activateTarget', { targetId: q.target });
+      await sendCDP('Page.bringToFront', {}, sid);
+      res.end(JSON.stringify({ ok: true }));
     }
 
     // GET /back?target=xxx - 后退
@@ -599,6 +611,7 @@ const server = http.createServer(async (req, res) => {
           '/new?url=': 'GET - 创建新后台 tab（自动等待加载）',
           '/close?target=': 'GET - 关闭 tab',
           '/navigate?target=&url=': 'GET - 导航（自动等待加载）',
+          '/activate?target=': 'GET - 激活 tab 并切到前台',
           '/back?target=': 'GET - 后退',
           '/info?target=': 'GET - 页面标题/URL/状态',
           '/eval?target=': 'POST body=JS表达式 - 执行 JS',

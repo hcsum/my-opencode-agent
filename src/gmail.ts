@@ -12,11 +12,16 @@ import { SerialQueue } from "./queue.js";
 import { OpencodeSession } from "./opencode.js";
 import { WorkflowRunner } from "./workflow.js";
 import {
+  clearPendingPermission,
+  getPendingPermission,
   isProcessed,
   markProcessed,
   releaseClaim,
+  upsertPendingPermission,
   tryClaimMessage,
 } from "./db.js";
+import type { PendingPermissionRecord } from "./db.js";
+import type { PermissionResponse, TurnOutcome } from "./opencode.js";
 
 interface ThreadMeta {
   senderEmail: string;
@@ -84,7 +89,19 @@ export class GmailBridge {
 
     this.gmail = google.gmail({ version: "v1", auth: this.oauth2Client });
 
-    const profile = await this.gmail.users.getProfile({ userId: "me" });
+    let profile;
+    try {
+      profile = await this.gmail.users.getProfile({ userId: "me" });
+    } catch (error) {
+      if (isRevokedRefreshTokenError(error)) {
+        console.error(
+          "[gmail] OAuth refresh token expired or revoked. Run `npx tsx scripts/gmail-reauth.ts` to reconnect Gmail.",
+        );
+        return;
+      }
+      throw error;
+    }
+
     this.userEmail = profile.data.emailAddress || "";
     console.log(`[gmail] connected as ${this.userEmail}`);
 
@@ -201,6 +218,17 @@ export class GmailBridge {
     const textBody = stripQuotedReply(body).trim() || subject;
     const content = `[Email from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${textBody}`;
 
+    const pendingPermission = getPendingPermission(threadId);
+    if (pendingPermission) {
+      await this.handlePendingPermission({
+        messageId,
+        threadId,
+        textBody,
+        pendingPermission,
+      });
+      return;
+    }
+
     console.log(
       `[gmail] enqueue from=${senderName} <${senderEmail}> subject=${subject}`,
     );
@@ -223,7 +251,7 @@ export class GmailBridge {
             `gmail from=${senderEmail} subject=${subject}`,
             async () => {
               const opencodeStartedAt = Date.now();
-              const response = await this.opencode.sendTurn("gmail", {
+              const response = await this.opencode.sendTurnWithApproval("gmail", {
                 text: content,
                 senderName,
                 chatTitle: subject,
@@ -244,20 +272,7 @@ export class GmailBridge {
         `[gmail] queue+opencode completed ${messageId} in ${Date.now() - queuedAt}ms`,
       );
 
-      const replyStartedAt = Date.now();
-      await this.sendReply(threadId, result);
-      console.log(
-        `[gmail] reply sent ${messageId} in ${Date.now() - replyStartedAt}ms`,
-      );
-
-      const markReadStartedAt = Date.now();
-      await this.markRead(messageId);
-      console.log(
-        `[gmail] marked read ${messageId} in ${Date.now() - markReadStartedAt}ms`,
-      );
-      console.log(
-        `[gmail] replied to thread ${threadId} total=${Date.now() - startedAt}ms`,
-      );
+      await this.finishMessage(messageId, threadId, result, startedAt);
     } catch (err) {
       releaseClaim(messageId);
       console.error(`[gmail] failed to process/reply thread ${threadId}`, err);
@@ -265,6 +280,78 @@ export class GmailBridge {
     }
 
     markProcessed(messageId, threadId, subject, senderEmail);
+  }
+
+  private async handlePendingPermission(params: {
+    messageId: string;
+    threadId: string;
+    textBody: string;
+    pendingPermission: PendingPermissionRecord;
+  }): Promise<void> {
+    const decision = parsePermissionResponse(params.textBody);
+
+    if (!decision) {
+      await this.sendReply(
+        params.threadId,
+        buildPermissionPrompt(params.pendingPermission, true),
+      );
+      await this.markRead(params.messageId);
+      return;
+    }
+
+    const outcome = await this.queue.enqueue(
+      `gmail permission ${params.pendingPermission.permissionId}`,
+      () =>
+        this.opencode.resolvePermission(
+          params.pendingPermission.sessionId,
+          params.pendingPermission.permissionId,
+          params.pendingPermission.messageId,
+          decision,
+        ),
+    );
+
+    await this.finishMessage(params.messageId, params.threadId, outcome, Date.now());
+  }
+
+  private async finishMessage(
+    messageId: string,
+    threadId: string,
+    outcome: TurnOutcome | string,
+    startedAt: number,
+  ): Promise<void> {
+    const replyStartedAt = Date.now();
+
+    if (typeof outcome === "string") {
+      clearPendingPermission(threadId);
+      await this.sendReply(threadId, outcome);
+    } else if (outcome.kind === "completed") {
+      clearPendingPermission(threadId);
+      await this.sendReply(threadId, outcome.text);
+    } else {
+      upsertPendingPermission({
+        threadId,
+        sessionId: outcome.permission.sessionId,
+        permissionId: outcome.permission.permissionId,
+        messageId: outcome.permission.messageId,
+        title: outcome.permission.title,
+        type: outcome.permission.type,
+        pattern: outcome.permission.pattern,
+      });
+      await this.sendReply(threadId, buildPermissionPrompt(outcome.permission));
+    }
+
+    console.log(
+      `[gmail] reply sent ${messageId} in ${Date.now() - replyStartedAt}ms`,
+    );
+
+    const markReadStartedAt = Date.now();
+    await this.markRead(messageId);
+    console.log(
+      `[gmail] marked read ${messageId} in ${Date.now() - markReadStartedAt}ms`,
+    );
+    console.log(
+      `[gmail] replied to thread ${threadId} total=${Date.now() - startedAt}ms`,
+    );
   }
 
   private extractTextBody(
@@ -437,4 +524,72 @@ function isReplyHeader(line: string): boolean {
     /^主题：/i.test(line) ||
     /^收件人：/i.test(line)
   );
+}
+
+function parsePermissionResponse(text: string): PermissionResponse | undefined {
+  const normalized = text.trim().toUpperCase();
+
+  if (
+    normalized === "APPROVE" ||
+    normalized.startsWith("APPROVE ") ||
+    normalized === "ALLOW" ||
+    normalized.startsWith("ALLOW ") ||
+    normalized === "YES"
+  ) {
+    return "once";
+  }
+
+  if (normalized === "ALWAYS" || normalized.startsWith("ALWAYS ")) {
+    return "always";
+  }
+
+  if (
+    normalized === "REJECT" ||
+    normalized.startsWith("REJECT ") ||
+    normalized === "DENY" ||
+    normalized.startsWith("DENY ") ||
+    normalized === "NO"
+  ) {
+    return "reject";
+  }
+
+  return undefined;
+}
+
+function buildPermissionPrompt(
+  permission: Pick<
+    PendingPermissionRecord,
+    "title" | "type" | "pattern"
+  >,
+  remindOnly = false,
+): string {
+  const lines = [
+    remindOnly
+      ? "This thread is waiting for your approval before I can continue."
+      : "I need your approval before I can continue this request.",
+    `Permission: ${permission.title || permission.type}`,
+  ];
+
+  if (permission.pattern) {
+    lines.push(`Target: ${permission.pattern}`);
+  }
+
+  lines.push(
+    "Reply with APPROVE to allow once, ALWAYS to remember this permission, or REJECT to deny it.",
+  );
+
+  return lines.join("\n");
+}
+
+function isRevokedRefreshTokenError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const cause = "response" in error ? error.response : undefined;
+  if (!cause || typeof cause !== "object") return false;
+
+  const data = "data" in cause ? cause.data : undefined;
+  if (!data || typeof data !== "object") return false;
+
+  const grantError = "error" in data ? data.error : undefined;
+  return grantError === "invalid_grant";
 }

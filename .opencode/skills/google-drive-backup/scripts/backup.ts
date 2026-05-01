@@ -6,7 +6,24 @@ import path from "node:path";
 import dotenv from "dotenv";
 import { google } from "googleapis";
 
-dotenv.config();
+// Try loading .env from project root (cwd) first, then fallback to script directory
+const envPaths = [
+  path.join(process.cwd(), ".env"),
+  path.join(__dirname, "..", "..", "..", "..", ".env"),
+];
+
+let envLoaded = false;
+for (const envPath of envPaths) {
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+    envLoaded = true;
+    break;
+  }
+}
+
+if (!envLoaded) {
+  dotenv.config(); // fallback to default behavior
+}
 
 const CREDENTIALS_DIR = path.join(os.homedir(), ".gdrive-backup");
 const KEYS_PATH = path.join(CREDENTIALS_DIR, "gcp-oauth.keys.json");

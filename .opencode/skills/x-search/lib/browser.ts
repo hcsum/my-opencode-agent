@@ -116,6 +116,14 @@ export async function closeBackgroundTab(targetId: string): Promise<void> {
   });
 }
 
+export async function activateTab(targetId: string): Promise<void> {
+  await callProxy({
+    method: "GET",
+    endpoint: "/activate",
+    query: { target: targetId },
+  });
+}
+
 export async function evalInTab<T = unknown>(
   targetId: string,
   expression: string,

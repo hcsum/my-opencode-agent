@@ -61,7 +61,7 @@ async function main(): Promise<void> {
 
   console.log("\nOpen this URL and complete authorization:\n");
   console.log(authUrl);
-  console.log("\nPaste the `code` query value from the callback URL.\n");
+  console.log("\nPaste the full callback URL after authorization.\n");
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -69,10 +69,8 @@ async function main(): Promise<void> {
   });
 
   try {
-    const code = (await rl.question("Authorization code: ")).trim();
-    if (!code) {
-      throw new Error("No authorization code provided");
-    }
+    const callbackUrl = (await rl.question("Callback URL: ")).trim();
+    const code = extractCodeFromCallbackUrl(callbackUrl);
 
     const { tokens } = await oauth2Client.getToken(code);
     if (!tokens.refresh_token) {
@@ -104,3 +102,23 @@ main().catch((error) => {
   console.error(`[reauth] failed: ${message}`);
   process.exit(1);
 });
+
+function extractCodeFromCallbackUrl(callbackUrl: string): string {
+  if (!callbackUrl) {
+    throw new Error("No callback URL provided");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(callbackUrl);
+  } catch {
+    throw new Error("Invalid callback URL");
+  }
+
+  const code = parsed.searchParams.get("code")?.trim();
+  if (!code) {
+    throw new Error("Callback URL is missing the code query parameter");
+  }
+
+  return code;
+}

@@ -7,6 +7,10 @@ import { SerialQueue } from "./queue.js";
 import { TelegramBridge } from "./telegram.js";
 import { GmailBridge } from "./gmail.js";
 import { initDatabase } from "./db.js";
+import { getRuntimeLogPath, setupFileLogging } from "./logger.js";
+
+setupFileLogging();
+console.log(`[app] runtime log file: ${getRuntimeLogPath()}`);
 
 async function main(): Promise<void> {
   const releaseLock = acquireInstanceLock();
