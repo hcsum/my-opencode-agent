@@ -30,8 +30,8 @@ type PageUrlResult = {
   source: "direct" | "cdp";
 };
 
-const DEFAULT_WATCHLIST_PATH = "notes/website-list.csv";
-const DEFAULT_OUTPUT_DIR = "notes/sitemap-slugs";
+const DEFAULT_WATCHLIST_PATH = "notes/seo/site-list.csv";
+const DEFAULT_OUTPUT_DIR = "notes/seo/site-sitemaps";
 const CDP_PROXY_BASE_URL = "http://localhost:3456";
 
 async function main(): Promise<void> {
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
 
   if (targets.length === 0) {
     throw new Error(
-      "No sitemap targets found. Add rows to notes/website-list.csv or pass --target site=https://example.com/sitemap.xml",
+      "No sitemap targets found. Add rows to notes/seo/site-list.csv or pass --target site=https://example.com/sitemap.xml",
     );
   }
 
@@ -418,7 +418,8 @@ function toSlug(rawUrl: string): string | undefined {
     return undefined;
   }
 
-  return pathname;
+  const segments = pathname.split("/").filter(Boolean);
+  return segments.at(-1);
 }
 
 async function readSiteSlugRecords(site: string, outputDir: string): Promise<SlugRecord[]> {

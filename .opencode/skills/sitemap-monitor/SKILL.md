@@ -15,6 +15,3 @@ description: 拉取并对比网站的sitemap，记录新增页面 slug。
 
 `npx tsx .opencode/skills/sitemap-monitor/scripts/sitemap-monitor.ts [--target site=https://example.com/sitemap.xml]`
 
-## 结果
-
-新增 slug 会写入 `notes/sitemap-slugs/<site>.csv`。
