@@ -5,11 +5,13 @@
   "type": "module",
   "description": "Telegram bridge for a shared OpenCode server",
   "scripts": {
+    "bridge": "bash scripts/bridge.sh",
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "opencode": "bash scripts/opencode-local.sh",
     "serve": "bash scripts/start-opencode-serve.sh",
-    "serve-and-dev": "bash scripts/serve-and-dev.sh",
+    "serve-and-bridge": "bash scripts/serve-and-bridge.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

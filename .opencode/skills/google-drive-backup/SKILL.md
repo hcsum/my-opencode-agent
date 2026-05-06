@@ -44,6 +44,8 @@ Preferred: set `GDRIVE_NOTES_BACKUP_FOLDER_ID` in your shell or `.env`, then run
 printf '%s' '{}' | npx tsx .opencode/skills/google-drive-backup/scripts/backup.ts
 ```
 
+Important: do not use `printenv GDRIVE_NOTES_BACKUP_FOLDER_ID` as the only check when the value may live in the project's `.env`. The backup script loads `.env` via `dotenv`, so shell inspection can incorrectly suggest the variable is missing.
+
 Or pass the target folder explicitly:
 
 ```bash
@@ -72,5 +74,5 @@ The script prints JSON with:
 ## Failure rules
 
 - If OAuth files are missing or invalid, stop and tell the user to fix local Google Drive auth first.
-- If the target Drive folder ID is missing, stop and ask for it or tell the user to set `GDRIVE_NOTES_BACKUP_FOLDER_ID`.
+- If the target Drive folder ID is missing, first verify whether the backup script can load it from the project's `.env`; do not rely on `printenv` alone. If it is still missing, stop and ask for it or tell the user to set `GDRIVE_NOTES_BACKUP_FOLDER_ID`.
 - Do not silently fall back to any other backup destination.

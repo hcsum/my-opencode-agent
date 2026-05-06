@@ -10,6 +10,8 @@ if [[ -f .env ]]; then
   set +a
 fi
 
+export OPENCODE_DB="$ROOT_DIR/.data/opencode.db"
+
 PORT="${OPENCODE_SERVE_PORT:-4096}"
 PROXY="${HTTPS_PROXY:-${https_proxy:-}}"
 
