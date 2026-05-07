@@ -51,12 +51,12 @@ If the type is unclear, ask one short clarification question instead of guessing
 
 ### Type 1: User-facing notes
 
-- Write to `<current_working_directory>/notes/`
+- Write to `<current_working_directory>/notes`
 - Use this for notes, saved research, summaries, references, quotes, reminders, or records the user wants preserved
 - Preserve orginal content and details. Only remove content if you see repetition of similar ideas.
 - Include source information when available, such as URLs, quoted text, platform names, or where the information came from
 - Decide creating new files or appending to existing ones based on the content
-- If need to create a new file, name it with the topic of the content
+- If need to create a new file, give it a descriptive name based on the topic or theme of the content
 - When adding to existing notes, if you see the newly added content fits any existing content and a consolidation is worth doing, ask for permission and propose the change
 
 ### Type 2: Agent-facing work guidance

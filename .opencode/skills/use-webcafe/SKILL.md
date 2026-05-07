@@ -1,6 +1,6 @@
 ---
 name: use-webcafe
-description: Use the browse script to search, open, and read articles on Web.Cafe (https://new.web.cafe). Provides search, open, and read actions via a CLI script that handles CDP tab lifecycle automatically.
+description: Use when user need to search or read content on Web.Cafe, including group messages. This skill provides a structured way to interact with Web.Cafe's search and messaging features. If the user needs to read a specific article, use `web-access` skill instead and follow the guidelines for extracting text and images.
 ---
 
 # Use Web.Cafe Browse Tools
