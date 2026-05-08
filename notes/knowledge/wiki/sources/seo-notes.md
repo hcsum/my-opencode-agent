@@ -45,7 +45,7 @@ backlinks ~= (-89.32 x KD) / (-100.62 + KD)
 - The first week after GSC submission is treated as a key exposure window.
 - Add a few backlinks and new internal pages daily during the early window.
 - One keyword maps to one page to avoid cannibalization.
-- A three-layer page loop is recommended: functional page, landing page, result page.
+- A three-layer page loop is recommended: function page, landing page, result page.
 - SSR is preferred over pure SPA for ranking.
 - Multilingual pages should use separate URLs and proper `hreflang`; do not rely on JS-only language switching.
 

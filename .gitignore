@@ -3,6 +3,9 @@ dist/
 .env
 .data/
 .DS_Store
-notes/
+notes/*
+!notes/AGENTS.md
+!notes/knowledge/
+!notes/knowledge/**
 tmp/
 signature_cache.json

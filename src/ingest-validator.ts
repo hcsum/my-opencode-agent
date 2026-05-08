@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const WORKSPACE_ROOT = process.cwd();
-const WIKI_ROOT = path.join(WORKSPACE_ROOT, "knowledge", "wiki");
+const WIKI_ROOT = path.join(WORKSPACE_ROOT, "notes", "knowledge", "wiki");
 const INDEX_PATH = path.join(WIKI_ROOT, "index.md");
 const LOG_PATH = path.join(WIKI_ROOT, "log.md");
 const SOURCES_ROOT = path.join(WIKI_ROOT, "sources");
@@ -46,11 +46,11 @@ export function validateIngestResult(input: {
   }
 
   if (!fileChanged(input.before.files, input.after.files, "index.md")) {
-    errors.push("Ingest did not update knowledge/wiki/index.md.");
+    errors.push("Ingest did not update notes/knowledge/wiki/index.md.");
   }
 
   if (!fileChanged(input.before.files, input.after.files, "log.md")) {
-    errors.push("Ingest did not append or update knowledge/wiki/log.md.");
+    errors.push("Ingest did not append or update notes/knowledge/wiki/log.md.");
   }
 
   const targetStat = safeStat(input.targetPath);
@@ -81,6 +81,61 @@ export function validateIngestResult(input: {
   };
 }
 
+export function validateCurrentIngestTarget(target: string): IngestValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const snapshot = captureWikiSnapshot();
+  const targetStat = isProbablyUrl(target) ? undefined : safeStat(target);
+  const sourcePages = collectAllSourcePages(snapshot.files);
+  const matchingSourcePages = findMatchingSourcePages({
+    target,
+    sourcePages,
+    files: snapshot.files,
+  });
+
+  if (!snapshot.files.has("index.md")) {
+    errors.push("notes/knowledge/wiki/index.md is missing.");
+  }
+
+  if (!snapshot.files.has("log.md")) {
+    errors.push("notes/knowledge/wiki/log.md is missing.");
+  }
+
+  if (targetStat?.isDirectory()) {
+    if (sourcePages.length === 0) {
+      errors.push("Directory ingest has no source pages under notes/knowledge/wiki/sources/.");
+    }
+  } else if (matchingSourcePages.length === 0) {
+    errors.push(`No source page in notes/knowledge/wiki/sources/ records the target (${target}).`);
+  }
+
+  if (!indexMentionsTarget(snapshot.files.get("index.md") || "", matchingSourcePages)) {
+    warnings.push("index.md does not clearly reference the matched source page.");
+  }
+
+  if (!logMentionsTarget(snapshot.files.get("log.md") || "", target, matchingSourcePages)) {
+    warnings.push("log.md does not clearly record this ingest target.");
+  }
+
+  if (!targetStat?.isDirectory()) {
+    validateMatchingSourcePages({
+      target,
+      matchingSourcePages,
+      files: snapshot.files,
+      errors,
+      warnings,
+    });
+  }
+
+  return {
+    passed: errors.length === 0,
+    errors,
+    warnings,
+    summary: buildSummary({ errors, warnings, touchedFiles: matchingSourcePages }),
+    touchedFiles: matchingSourcePages,
+  };
+}
+
 function validateFileIngest(input: {
   targetPath: string;
   sourcePages: string[];
@@ -89,14 +144,15 @@ function validateFileIngest(input: {
   warnings: string[];
 }): void {
   if (input.sourcePages.length === 0) {
-    input.errors.push("File ingest did not create or update any source page under knowledge/wiki/sources/.");
+    input.errors.push("File ingest did not create or update any source page under notes/knowledge/wiki/sources/.");
     return;
   }
 
   const relativeTarget = path.relative(WORKSPACE_ROOT, input.targetPath) || input.targetPath;
-  const matchingSourcePages = input.sourcePages.filter((file) => {
-    const content = input.after.get(file) || "";
-    return content.includes(input.targetPath) || content.includes(relativeTarget);
+  const matchingSourcePages = findMatchingSourcePages({
+    target: relativeTarget,
+    sourcePages: input.sourcePages,
+    files: input.after,
   });
 
   if (matchingSourcePages.length === 0) {
@@ -106,32 +162,13 @@ function validateFileIngest(input: {
     return;
   }
 
-  const sourceContent = safeReadFile(input.targetPath);
-  const sourceLineCount = countNonEmptyLines(sourceContent);
-
-  for (const page of matchingSourcePages) {
-    const content = input.after.get(page) || "";
-
-    if (content.length < 400) {
-      input.warnings.push(`${page} is very short and may be too shallow for a durable source page.`);
-    }
-
-    if (!/source path:/i.test(content)) {
-      input.errors.push(`${page} is missing a Source path record.`);
-    }
-
-    if (!/key points/i.test(content) && !/durable takeaways/i.test(content)) {
-      input.errors.push(`${page} is missing the expected summary sections for a source page.`);
-    }
-
-    if (sourceLineCount >= 40 && countMarkdownBullets(content) < 4) {
-      input.warnings.push(`${page} may be under-structured relative to the source length.`);
-    }
-
-    if (containsFormula(sourceContent) && !containsFormula(content)) {
-      input.warnings.push(`${page} does not preserve any formula-like content from the source.`);
-    }
-  }
+  validateMatchingSourcePages({
+    target: input.targetPath,
+    matchingSourcePages,
+    files: input.after,
+    errors: input.errors,
+    warnings: input.warnings,
+  });
 }
 
 function buildSummary(input: {
@@ -192,6 +229,13 @@ function collectChangedSourcePages(before: Map<string, string>, after: Map<strin
   );
 }
 
+function collectAllSourcePages(files: Map<string, string>): string[] {
+  const prefix = path.relative(WIKI_ROOT, SOURCES_ROOT).replace(/\\/g, "/") + "/";
+  return Array.from(files.keys())
+    .filter((file) => file.startsWith(prefix) && !file.endsWith(".gitkeep"))
+    .sort();
+}
+
 function safeStat(filePath: string): fs.Stats | undefined {
   try {
     return fs.statSync(filePath);
@@ -223,4 +267,114 @@ function countMarkdownBullets(content: string): number {
 
 function containsFormula(content: string): boolean {
   return /KDRoi\s*=|KGR\s*=|外链数\s*≈|\([^)]+\)\s*\/\s*[A-Za-z\u4e00-\u9fa5]+|```[\s\S]*?=/.test(content);
+}
+
+function hasSourceLocator(content: string): boolean {
+  return /source path:/i.test(content) || /original url:/i.test(content) || /source url:/i.test(content);
+}
+
+function hasSummarySection(content: string): boolean {
+  return /##\s+source summary\b/i.test(content) || /##\s+summary\b/i.test(content);
+}
+
+function hasStructuredKnowledgeSection(content: string): boolean {
+  return (
+    /##\s+key structures preserved from source\b/i.test(content) ||
+    /##\s+reusable (takeaways|decision rules|rules)\b/i.test(content) ||
+    /##\s+source-specific evidence\b/i.test(content) ||
+    /##\s+key points\b/i.test(content) ||
+    /##\s+durable takeaways\b/i.test(content)
+  );
+}
+
+function normalizePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/");
+}
+
+function findMatchingSourcePages(input: {
+  target: string;
+  sourcePages: string[];
+  files: Map<string, string>;
+}): string[] {
+  const matchers = buildTargetMatchers(input.target);
+  return input.sourcePages.filter((file) => {
+    const content = input.files.get(file) || "";
+    return matchers.some((token) => token.length > 0 && content.includes(token));
+  });
+}
+
+function buildTargetMatchers(target: string): string[] {
+  const tokens = new Set<string>();
+  const normalizedTarget = normalizePath(target);
+  tokens.add(target);
+  tokens.add(normalizedTarget);
+
+  if (!isProbablyUrl(target)) {
+    const relativeTarget = normalizePath(path.relative(WORKSPACE_ROOT, target) || target);
+    tokens.add(relativeTarget);
+    tokens.add(path.basename(target));
+  } else {
+    try {
+      const url = new URL(target);
+      tokens.add(url.pathname);
+      const lastSegment = url.pathname.split("/").filter(Boolean).pop();
+      if (lastSegment) tokens.add(lastSegment);
+    } catch {
+      // ignore malformed URL and fall back to raw string matching
+    }
+  }
+
+  return Array.from(tokens).filter(Boolean);
+}
+
+function validateMatchingSourcePages(input: {
+  target: string;
+  matchingSourcePages: string[];
+  files: Map<string, string>;
+  errors: string[];
+  warnings: string[];
+}): void {
+  const sourceContent = isProbablyUrl(input.target) ? "" : safeReadFile(input.target);
+  const sourceLineCount = countNonEmptyLines(sourceContent);
+
+  for (const page of input.matchingSourcePages) {
+    const content = input.files.get(page) || "";
+
+    if (content.length < 400) {
+      input.warnings.push(`${page} is very short and may be too shallow for a durable source page.`);
+    }
+
+    if (!hasSourceLocator(content)) {
+      input.errors.push(`${page} is missing a source locator such as Source path or Original URL.`);
+    }
+
+    if (!hasSummarySection(content)) {
+      input.warnings.push(`${page} is missing a clear summary section.`);
+    }
+
+    if (!hasStructuredKnowledgeSection(content)) {
+      input.warnings.push(`${page} is missing a clear structure, evidence, or takeaways section.`);
+    }
+
+    if (sourceLineCount >= 40 && countMarkdownBullets(content) < 4) {
+      input.warnings.push(`${page} may be under-structured relative to the source length.`);
+    }
+
+    if (sourceContent && containsFormula(sourceContent) && !containsFormula(content)) {
+      input.warnings.push(`${page} does not preserve any formula-like content from the source.`);
+    }
+  }
+}
+
+function indexMentionsTarget(indexContent: string, matchingSourcePages: string[]): boolean {
+  return matchingSourcePages.some((file) => indexContent.includes(`[[${file}]]`));
+}
+
+function logMentionsTarget(logContent: string, target: string, matchingSourcePages: string[]): boolean {
+  const matchers = [...buildTargetMatchers(target), ...matchingSourcePages.map((file) => path.basename(file))];
+  return matchers.some((token) => token.length > 0 && logContent.includes(token));
+}
+
+function isProbablyUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
 }

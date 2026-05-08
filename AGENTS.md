@@ -40,36 +40,12 @@ Assist user to achieve his goals. Don't just advise user what to do. With all th
 - When need to visit a sub page of a website, NEVER guess the URL, always get the URL from the page, or click the page element
 - Must look for web-access skill in this repo instead of the system global location. 
 
-## File Writing Rules
+## Knowledge System
 
-When the user asks you to write something down, or remember something, or similar phases, first classify it into exactly one of these two types:
-
-1. User-facing notes
-2. Agent-facing work guidance
-
-If the type is unclear, ask one short clarification question instead of guessing.
-
-### Type 1: User-facing notes
-
-- Write to `<current_working_directory>/notes`
-- Use this for notes, saved research, summaries, references, quotes, reminders, or records the user wants preserved
-- Preserve orginal content and details. Only remove content if you see repetition of similar ideas.
-- Include source information when available, such as URLs, quoted text, platform names, or where the information came from
-- Decide creating new files or appending to existing ones based on the content
-- If need to create a new file, give it a descriptive name based on the topic or theme of the content
-- When adding to existing notes, if you see the newly added content fits any existing content and a consolidation is worth doing, ask for permission and propose the change
-
-### Type 2: Agent-facing work guidance
-
-- Write to `AGENTS.md`
-- Use this only for durable instructions that should change future agent behavior in this project
-- Figure out if should append a new section or consolidating new input into existing content
-
-### Hard Boundaries
-
-- Never write user notes into `AGENTS.md`
-- Never write agent instructions into `notes/`
-- Never modify `notes/user.md` unless the user explicitly asks you to
+- When the task is about long-term knowledge capture, ingesting a local file or URL into the knowledge base, knowledge-base query, or wiki maintenance, use the `llm-wiki` skill and operate only under `notes/knowledge/`.
+- `notes/knowledge/raw/` is the immutable source layer, `notes/knowledge/wiki/` is the LLM-maintained wiki, and `notes/knowledge/schema/` defines the workflow.
+- Never modify `notes/user.md` unless the user explicitly asks you to.
+- Only modify `AGENTS.md` when the user wants to change durable agent behavior.
 
 ## Skill Authoring
 

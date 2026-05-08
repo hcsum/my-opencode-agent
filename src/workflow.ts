@@ -19,7 +19,7 @@ import type {
 
 const COMMAND_PATTERN = /^\/(?:kb|wiki)\s+(ingest|query|lint)\b([\s\S]*)$/i;
 const WORKSPACE_ROOT = process.cwd();
-const KNOWLEDGE_SCHEMA_ROOT = path.join(WORKSPACE_ROOT, "knowledge", "schema");
+const KNOWLEDGE_SCHEMA_ROOT = path.join(WORKSPACE_ROOT, "notes", "knowledge", "schema");
 const DEFAULT_INGEST_LANGUAGE_MODE: IngestLanguageMode = "source-original-wiki-zh";
 
 interface WorkflowRequest {
@@ -303,7 +303,7 @@ function schemaReferenceBlock(command: WorkflowCommand): string {
     .join("\n\n");
 
   if (!references) {
-    return "Schema references: knowledge/schema/ files are available in the repo and should be followed.";
+    return "Schema references: notes/knowledge/schema/ files are available in the repo and should be followed.";
   }
 
   return [`Schema references:`, references].join("\n");

@@ -1,0 +1,26 @@
+# Workflows
+
+## Ingest
+
+1. Read the requested raw source.
+2. Ensure the source is present under `notes/knowledge/raw/`.
+3. Create or update a source page in `notes/knowledge/wiki/sources/`.
+4. Update any affected entity, concept, or synthesis pages.
+5. Refresh `notes/knowledge/wiki/index.md` if page inventory changed.
+6. Append an entry to `notes/knowledge/wiki/log.md`.
+7. Apply the ingest language policy or any explicit override such as `--all-zh` or `--preserve-language`.
+
+## Query
+
+1. Read `notes/knowledge/wiki/index.md` first.
+2. Read the most relevant wiki pages.
+3. Answer from the wiki before going back to raw material.
+4. If the answer is durable, save it under `notes/knowledge/wiki/syntheses/` or `notes/knowledge/wiki/reports/`.
+5. Append an entry to `notes/knowledge/wiki/log.md` when a durable artifact is created.
+
+## Lint
+
+1. Check for stale claims, orphan pages, duplicate topics, and missing links.
+2. Check whether important referenced concepts or entities lack dedicated pages.
+3. Repair straightforward structural issues when safe.
+4. Append an entry to `notes/knowledge/wiki/log.md` with findings and fixes.

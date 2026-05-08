@@ -1,0 +1,5 @@
+- `./my-keywords.csv` list the keyword stats and conclusions about potential keywords
+- `./credentials` contains user credentials that use to log in some websites
+- `./seo` is the folder for potentially valuable SEO topics and research results, also for SEO technique and experience notes 
+- `./user.md` contains essential info about the user
+- `./knowledge` is the LLM-maintained knowledge system; the rest of `notes/` is user-maintained unless explicitly requested

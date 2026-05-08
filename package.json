@@ -12,7 +12,8 @@
     "opencode": "bash scripts/opencode-local.sh",
     "serve": "bash scripts/start-opencode-serve.sh",
     "serve-and-bridge": "bash scripts/serve-and-bridge.sh",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "validate-ingest": "tsx src/validate-ingest.ts"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^0.9.5",

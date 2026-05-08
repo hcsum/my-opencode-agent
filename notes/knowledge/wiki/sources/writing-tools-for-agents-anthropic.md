@@ -1,8 +1,8 @@
-# Source: notes/writing-tools-for-agents-anthropic.md
+# Source: notes/knowledge/raw/writing-tools-for-agents-anthropic.md
 
 ## Metadata
 
-- Source path: `notes/writing-tools-for-agents-anthropic.md`
+- Source path: `notes/knowledge/raw/writing-tools-for-agents-anthropic.md`
 - Source type: local markdown note summarizing an external article
 - Original article: https://www.anthropic.com/engineering/writing-tools-for-agents
 - Publisher: Anthropic Engineering
