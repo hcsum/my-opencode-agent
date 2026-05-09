@@ -3,3 +3,4 @@
 - `./seo` is the folder for potentially valuable SEO topics and research results, also for SEO technique and experience notes 
 - `./user.md` contains essential info about the user
 - `./knowledge` is the LLM-maintained knowledge system; the rest of `notes/` is user-maintained unless explicitly requested
+- `./my-files` goes random articles of various topic, tutorials, random notes

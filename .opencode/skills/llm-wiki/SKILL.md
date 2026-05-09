@@ -1,6 +1,6 @@
 ---
 name: llm-wiki
-description: Maintain the persistent knowledge wiki under `notes/knowledge/`. Use this whenever the task is about long-term knowledge capture, ingesting a local file, directory, URL, article, or other source material, querying the knowledge base, or linting and repairing wiki structure.
+description: Maintain the persistent knowledge wiki under `notes/knowledge/`. Use this whenever the task is about long-term knowledge capture, ingesting a local file, directory, URL, article, or other source material, asking a question against the knowledge base, or linting and repairing wiki structure. Requests phrased like `ingest <source>` or `query wiki <question>` should trigger this skill.
 ---
 
 Maintain the persistent LLM wiki under `notes/knowledge/`.
@@ -51,10 +51,16 @@ Read additional wiki pages only after the index narrows the target.
 
 ### Query
 
+- Interpret requests like `query wiki <question>` as a knowledge-query workflow, not as a generic chat question.
 - Start from `notes/knowledge/wiki/index.md`.
 - Prefer answering from the wiki before going back to raw sources.
 - Cite the wiki pages or raw sources used.
 - If the answer creates a durable artifact, write it back into `notes/knowledge/wiki/syntheses/` or `notes/knowledge/wiki/reports/` and update `index.md` and `log.md`.
+
+### Query Routing
+
+- Interpret requests like `query wiki what do we know about X` or `query wiki compare A and B` as direct knowledge-base queries.
+- The correct sequence is: read `notes/knowledge/wiki/index.md`, open the most relevant wiki pages, answer from the wiki with citations, and only go back to raw material if the wiki is clearly insufficient.
 
 ### Lint
 

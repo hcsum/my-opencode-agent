@@ -9,7 +9,7 @@ Use the local X search script when the user wants to find what people are saying
 
 ## Prerequisite
 
-If browser access is not already ready, load `web-access`
+If browser access is not already ready, load `web-access` from current repo
 
 ## Command
 
@@ -37,7 +37,6 @@ printf '%s' '{"query":"<query>","limit":20}' | npx tsx .opencode/skills/x-search
    - Use multiple search rounds whenever needed until the user's request is actually satisfied.
 
 3. Escalate from broad to specific
-   - Good progression: `cursor` -> `cursor ai` -> `cursor ai pricing`.
    - Try close variants, abbreviations, alternate wording, product aliases, and common misspellings.
    - If useful, shift between topic words, company names, hashtags, and user handles.
 
@@ -45,11 +44,24 @@ printf '%s' '{"query":"<query>","limit":20}' | npx tsx .opencode/skills/x-search
    - Do not keep searching once the answer is clear.
    - Do enough rounds to cover the topic well, but avoid redundant searches.
 
+5. Prioritize signal, not just matches
+   - Prefer posts with meaningful engagement when choosing what to cite or trust most.
+   - Treat likes, reposts, replies, and quote-post discussion as rough signal, not proof.
+   - If the strongest-looking matches have very low engagement, say so explicitly and lower confidence.
+   - Do not draw broad conclusions from a handful of low-engagement posts unless the user asked for niche or early signal.
+
+6. Filter out garbage and duplicates
+   - Watch for near-duplicate posts, copy-paste summaries, and engagement-farming threads.
+   - If many posts are 80% identical, treat them as one repeated claim, not independent confirmation.
+   - Prefer original posts, firsthand examples, or replies with concrete reasoning over reposted framing.
+   - Call out when the result set is mostly derivative or low-insight.
+
 ## Output expectations
 
 When reporting back, prefer a concise synthesis with:
 
 - what you searched
+- whether the result set had strong engagement or weak signal
 - the strongest themes you found
 - notable sentiment or disagreement
 - recurring language or framing
@@ -63,8 +75,9 @@ If the user wants examples, include a few representative posts or accounts, but 
 
 - Prefer 3-6 compressed sections or buckets instead of long enumerations.
 - Group overlapping posts under one conclusion instead of repeating the same point post by post.
-- Default to quality tiers when useful: `一手消息，最推荐`、`二手消息但有见解，可看`、`纯搬运/低洞见，低推荐`.
+- Default to quality tiers when useful: `firsthand, highest value`, `secondhand but insightful, worth reading`, `repackaged or low-insight, low priority`.
 - Keep low-signal content short; spend most of the space on the highest-signal posts and conclusions.
+- When engagement is weak or the corpus is repetitive, say that early instead of overstating certainty.
 
 ## Avoid
 
@@ -72,6 +85,8 @@ If the user wants examples, include a few representative posts or accounts, but 
 - giving up after one failed search
 - dumping a long list of posts with no synthesis
 - treating a few loud posts as broad consensus
+- treating a few low-engagement posts as strong evidence
 - confusing engagement bait with meaningful signal
+- counting many near-identical posts as multiple independent signals
 - repeating the same takeaway in multiple sections
 - expanding weak or hype-heavy posts just to make the answer feel complete
