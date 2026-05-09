@@ -4,19 +4,24 @@
 
 1. Read the requested raw source.
 2. Ensure the source is present under `notes/knowledge/raw/`.
-3. Create or update a source page in `notes/knowledge/wiki/sources/`.
-4. Update any affected entity, concept, or synthesis pages.
-5. Refresh `notes/knowledge/wiki/index.md` if page inventory changed.
-6. Append an entry to `notes/knowledge/wiki/log.md`.
-7. Apply the ingest language policy or any explicit override such as `--all-zh` or `--preserve-language`.
+3. Check whether it matches an existing source by original URL, then by existing source-page metadata, then by filename as a weaker fallback.
+4. If it is a newer version of an already ingested source, keep it as a new raw version instead of overwriting the older raw file.
+5. Create or update a source page in `notes/knowledge/wiki/sources/`.
+6. For same-source updates, update the existing source page, fold repeated material together, and add only net-new or changed claims.
+7. Mark superseded source versions explicitly when the newer source replaces earlier claims or coverage.
+8. Update any affected entity, concept, or synthesis pages.
+9. Refresh `notes/knowledge/wiki/index.md` if page inventory changed.
+10. Append an entry to `notes/knowledge/wiki/log.md`.
+11. Apply the ingest language policy or any explicit override such as `--all-zh` or `--preserve-language`.
 
 ## Query
 
-1. Read `notes/knowledge/wiki/index.md` first.
-2. Read the most relevant wiki pages.
-3. Answer from the wiki before going back to raw material.
-4. If the answer is durable, save it under `notes/knowledge/wiki/syntheses/` or `notes/knowledge/wiki/reports/`.
-5. Append an entry to `notes/knowledge/wiki/log.md` when a durable artifact is created.
+1. If the question is clearly about accumulated knowledge, prior ingests, or historical conclusions, route it through the wiki even without an explicit `query wiki` prefix.
+2. Read `notes/knowledge/wiki/index.md` first.
+3. Read the most relevant wiki pages.
+4. Answer from the wiki before going back to raw material.
+5. If the answer is durable, save it under `notes/knowledge/wiki/syntheses/` or `notes/knowledge/wiki/reports/`.
+6. Append an entry to `notes/knowledge/wiki/log.md` when a durable artifact is created.
 
 ## Lint
 

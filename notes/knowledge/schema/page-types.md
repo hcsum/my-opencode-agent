@@ -5,6 +5,7 @@
 - Location: `notes/knowledge/wiki/sources/`
 - Purpose: summarize one raw source and capture the most important claims, evidence, and follow-up links.
 - Default language: same as the source unless the ingest command explicitly overrides it.
+- For updated raw versions of the same source, prefer one maintained source page with clear version or supersession notes instead of duplicating nearly identical source pages.
 
 ## Entity Pages
 

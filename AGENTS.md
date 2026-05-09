@@ -42,7 +42,8 @@ Assist user to achieve his goals. Don't just advise user what to do. With all th
 
 ## Knowledge System
 
-- When the task is about long-term knowledge capture, ingesting a local file or URL into the knowledge base, asking a question against the knowledge base, or wiki maintenance, use the `llm-wiki` skill and operate only under `notes/knowledge/`.
+- When the task is about long-term knowledge capture, ingesting a local file or URL into the knowledge base, asking about accumulated knowledge, prior ingests, or historical conclusions, or wiki maintenance, use the `llm-wiki` skill and operate only under `notes/knowledge/`.
+- Default to wiki lookup for clearly knowledge-base-oriented questions even when the user does not explicitly say `query wiki`; keep `query wiki <question>` as a force-use-wiki override.
 - `notes/knowledge/raw/` is the immutable source layer, `notes/knowledge/wiki/` is the LLM-maintained wiki, and `notes/knowledge/schema/` defines the workflow.
 - Never modify `notes/user.md` unless the user explicitly asks you to.
 - Only modify `AGENTS.md` when the user wants to change durable agent behavior.

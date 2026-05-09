@@ -19,6 +19,13 @@ This directory defines how the agent should maintain the persistent wiki under `
 
 - Ingest means integrating source material into the wiki, not merely indexing it.
 - Create or update a source page for each ingested item.
+- Resolve same-source candidates in this order: original URL match, existing source-page metadata match, then filename match as a weaker fallback.
+- If the original URL matches an existing source page, default to updating that source instead of creating a parallel page unless the new material is clearly a different document.
+- If only the filename matches, inspect the existing source page and raw metadata before deciding whether it is truly the same source.
+- For updated versions of the same source, keep raw files versioned instead of overwriting older evidence.
+- If a newer raw file is clearly the same source with additional material, update the existing source page instead of creating a duplicate topic page.
+- De-duplicate repeated content in the wiki layer: keep stable takeaways once, add only net-new facts, and revise older claims when the new source supersedes them.
+- When one source version supersedes another, mark that relationship explicitly in the source page while preserving the older raw file for traceability.
 - Update any related entity, concept, or synthesis pages when the source adds important information.
 - Preserve uncertainty and contradictions instead of flattening them.
 - Update `notes/knowledge/wiki/index.md` and append a concise entry to `notes/knowledge/wiki/log.md`.
@@ -28,6 +35,8 @@ This directory defines how the agent should maintain the persistent wiki under `
 
 ## Query Rules
 
+- If the question is clearly about accumulated knowledge, prior ingests, or historical conclusions, treat it as a wiki query even without an explicit `query wiki` prefix.
+- Treat `query wiki <question>` as an explicit force-use-wiki override when the user wants to bypass ambiguity.
 - Start from `notes/knowledge/wiki/index.md` to identify relevant pages.
 - Prefer answering from the wiki before re-reading raw sources.
 - Cite the wiki pages or raw sources that support the answer.
@@ -52,4 +61,5 @@ This directory defines how the agent should maintain the persistent wiki under `
 
 - The knowledge system operates through `ingest`, `query`, and `lint` workflows.
 - The agent should load the `llm-wiki` skill for long-term knowledge capture, knowledge-base query, and wiki maintenance.
+- Knowledge-base questions do not require a fixed trigger phrase; the agent should infer wiki-query intent when the user is clearly asking about stored knowledge.
 - The agent decides how to execute the workflow, but should keep all knowledge work under `notes/knowledge/`.

@@ -1,6 +1,6 @@
 ---
 name: llm-wiki
-description: Maintain the persistent knowledge wiki under `notes/knowledge/`. Use this whenever the task is about long-term knowledge capture, ingesting a local file, directory, URL, article, or other source material, asking a question against the knowledge base, or linting and repairing wiki structure. Requests phrased like `ingest <source>` or `query wiki <question>` should trigger this skill.
+description: Maintain the persistent knowledge wiki under `notes/knowledge/`. Use this whenever the task is about long-term knowledge capture, ingesting a local file, directory, URL, article, or other source material, asking a question about accumulated wiki knowledge, or linting and repairing wiki structure. Requests phrased like `ingest <source>` should trigger this skill, and knowledge questions should default to wiki lookup even without an explicit `query wiki` prefix.
 ---
 
 Maintain the persistent LLM wiki under `notes/knowledge/`.
@@ -36,7 +36,14 @@ Read additional wiki pages only after the index narrows the target.
 - If the ingest target is a URL or other remote source, first load `web-access`, fetch the source content, and save it as a markdown source under `notes/knowledge/raw/` before continuing.
 - For remote sources, choose a stable descriptive filename derived from the source, such as domain plus slug or article identifier.
 - Ensure the source exists under `notes/knowledge/raw/`. If it currently lives elsewhere in the repo, mirror it into `raw/` before or while ingesting.
+- If the source is an updated version of material already ingested, keep the older raw file for traceability and save the new file as a new raw version instead of overwriting it.
 - Create or update a source page under `notes/knowledge/wiki/sources/`.
+- Determine same-source updates in this order: match a stable original URL first, then existing source-page metadata that already points to the same raw/source origin, then filename similarity as a weaker fallback.
+- If the URL matches an existing source, treat the ingest as an update to that source unless the content clearly belongs to a distinct document.
+- If only the filename matches, do not assume exact identity blindly; use it as a cue to inspect the existing source page and raw metadata before deciding whether to update or create a new source page.
+- When an updated raw file clearly extends the same source, prefer updating the existing source page instead of creating a duplicate page.
+- Merge repeated material only once in the wiki. Preserve durable prior takeaways, add net-new facts, and revise claims only where the new version materially changes them.
+- If the new source version fully supersedes an older one, say so explicitly in the source page and keep the relationship traceable rather than deleting the old raw evidence.
 - Update related entity, concept, synthesis, or report pages only when the source materially changes them.
 - Update `notes/knowledge/wiki/index.md` when page inventory changes.
 - Append an entry to `notes/knowledge/wiki/log.md`.
@@ -51,7 +58,8 @@ Read additional wiki pages only after the index narrows the target.
 
 ### Query
 
-- Interpret requests like `query wiki <question>` as a knowledge-query workflow, not as a generic chat question.
+- When the user is clearly asking about accumulated knowledge, prior ingests, historical conclusions, or what the repo already knows about a topic, treat it as a knowledge-query workflow by default.
+- Treat `query wiki <question>` as an explicit force-use-wiki override, not as the only valid trigger.
 - Start from `notes/knowledge/wiki/index.md`.
 - Prefer answering from the wiki before going back to raw sources.
 - Cite the wiki pages or raw sources used.
@@ -59,7 +67,7 @@ Read additional wiki pages only after the index narrows the target.
 
 ### Query Routing
 
-- Interpret requests like `query wiki what do we know about X` or `query wiki compare A and B` as direct knowledge-base queries.
+- Interpret requests like `what do we know about X`, `what did we conclude about Y`, `compare A and B based on our notes`, or `query wiki compare A and B` as knowledge-base queries when they are clearly asking about stored knowledge.
 - The correct sequence is: read `notes/knowledge/wiki/index.md`, open the most relevant wiki pages, answer from the wiki with citations, and only go back to raw material if the wiki is clearly insufficient.
 
 ### Lint
