@@ -14,6 +14,14 @@ metadata:
 
 在开始联网操作前，先判断这次浏览器任务更适合哪种模式，并优先说明这条核心差异：
 
+- **Browserbase 云浏览器**：当 `BROWSERBASE_API_KEY` 已设置时，优先直接使用 Browserbase 云端 session；适合要云浏览器、代理、自动 CAPTCHA 的场景。
+
+Browserbase 持久化登录态约定：
+
+- 若设置 `BROWSERBASE_CONTEXT_ID`，代理创建 Browserbase session 时会自动带上该 context。
+- `BROWSERBASE_CONTEXT_PERSIST=true` 时，会把本次 session 新增的 cookies / localStorage / 站点数据回写到该 context。
+- 推荐做法：先创建一个固定 context，在 Browserbase 里手动登录一次，之后持续复用同一个 `BROWSERBASE_CONTEXT_ID`。
+
 - **主力浏览器**：可能需要用户人工确认远程调试授权；自动继承现有登录态、书签、插件。
 - **专用浏览器**：配置完成后日常运行通常不需要用户人工确认 debug access；与主力浏览器完全隔离。
 
@@ -35,9 +43,15 @@ node ./scripts/check-deps.mjs
 
 自动检查行为：
 
+- 若存在 `BROWSERBASE_API_KEY`：直接返回 ok，并走 Browserbase 云浏览器。
 - 若主力或专用任一可用：直接返回 ok，不询问。
 - 若主力和专用都可用：默认走专用浏览器。
 - 若都不可用：再进入浏览器模式引导询问用户。
+
+补充说明：
+
+- `BROWSERBASE_API_KEY` 是云端切换开关；设置后不再尝试本地浏览器探测。
+- 未设置 `BROWSERBASE_API_KEY` 时，保留原有本地浏览器行为；若 agent 运行在云端且也没配 key，检查会按本地模式失败。
 
 如果用户明确要用专用浏览器，先只问一次他要用哪个浏览器，然后把选择映射成稳定的 `browser-id`：
 
@@ -189,8 +203,11 @@ node ./scripts/check-deps.mjs
 
 返回的 JSON 中：
 
+- `provider: "browserbase"` 表示当前走的是 Browserbase 云浏览器。
+- `provider: "local"` 表示当前走的是本地 CDP 浏览器。
 - `selectedMode: "primary"` 表示当前选中了主力浏览器。
 - `selectedMode: "dedicated"` 表示当前选中了专用浏览器。
+- `selectedMode: "browserbase"` 表示当前选中了 Browserbase 云浏览器。
 - 默认命令不是“固定走主力浏览器”，而是自动在可用连接里选择；两者都可用时优先 dedicated。
 
 显式主力浏览器路径：
