@@ -21,3 +21,5 @@ This file is the primary navigation map for the knowledge wiki.
 ## Syntheses
 
 ## Reports
+
+- [[reports/aws-interview-question-bank.md]] - AWS 面试常见问题题库，按问题、考点、回答框架和常见误区整理复习素材。

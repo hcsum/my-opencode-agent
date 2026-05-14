@@ -7,12 +7,14 @@
 3. Check whether it matches an existing source by original URL, then by existing source-page metadata, then by filename as a weaker fallback.
 4. If it is a newer version of an already ingested source, keep it as a new raw version instead of overwriting the older raw file.
 5. Create or update a source page in `notes/knowledge/wiki/sources/`.
-6. For same-source updates, update the existing source page, fold repeated material together, and add only net-new or changed claims.
-7. Mark superseded source versions explicitly when the newer source replaces earlier claims or coverage.
-8. Update any affected entity, concept, or synthesis pages.
-9. Refresh `notes/knowledge/wiki/index.md` if page inventory changed.
-10. Append an entry to `notes/knowledge/wiki/log.md`.
-11. Apply the ingest language policy or any explicit override such as `--all-zh` or `--preserve-language`.
+6. Preserve reusable detail in the source page when a shorter summary would flatten answer frames, decision boundaries, failure modes, debugging order, or other high-value structures.
+7. For same-source updates, update the existing source page, fold repeated material together, and add only net-new or changed claims.
+8. Create an additional report or synthesis only when the source contains reusable detail patterns that deserve their own artifact.
+9. Mark superseded source versions explicitly when the newer source replaces earlier claims or coverage.
+10. Update any affected entity, concept, synthesis, or report pages.
+11. Refresh `notes/knowledge/wiki/index.md` if page inventory changed.
+12. Append an entry to `notes/knowledge/wiki/log.md`.
+13. Apply the ingest language policy or any explicit override such as `--all-zh` or `--preserve-language`.
 
 ## Query
 

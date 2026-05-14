@@ -10,6 +10,7 @@ Maintain the persistent LLM wiki under `notes/knowledge/`.
 - Keep source material, structured wiki pages, and workflow rules separated.
 - Make knowledge compound over time through `ingest`, `query`, and `lint`.
 - Treat the wiki as a maintained artifact, not as ad hoc notes.
+- Minimize information loss during ingest instead of optimizing for brevity.
 
 ## Directory Model
 
@@ -38,12 +39,16 @@ Read additional wiki pages only after the index narrows the target.
 - Ensure the source exists under `notes/knowledge/raw/`. If it currently lives elsewhere in the repo, mirror it into `raw/` before or while ingesting.
 - If the source is an updated version of material already ingested, keep the older raw file for traceability and save the new file as a new raw version instead of overwriting it.
 - Create or update a source page under `notes/knowledge/wiki/sources/`.
+- Treat the source page as a high-fidelity extraction layer, not a brevity-first summary.
+- Preserve decision-critical detail from the source when compression would reduce reuse value, such as answer frames, decision boundaries, failure modes, debugging order, recurring question shapes, and what the evaluator or operator is actually testing.
 - Determine same-source updates in this order: match a stable original URL first, then existing source-page metadata that already points to the same raw/source origin, then filename similarity as a weaker fallback.
 - If the URL matches an existing source, treat the ingest as an update to that source unless the content clearly belongs to a distinct document.
 - If only the filename matches, do not assume exact identity blindly; use it as a cue to inspect the existing source page and raw metadata before deciding whether to update or create a new source page.
 - When an updated raw file clearly extends the same source, prefer updating the existing source page instead of creating a duplicate page.
 - Merge repeated material only once in the wiki. Preserve durable prior takeaways, add net-new facts, and revise claims only where the new version materially changes them.
 - If the new source version fully supersedes an older one, say so explicitly in the source page and keep the relationship traceable rather than deleting the old raw evidence.
+- Do not generate an extra report or synthesis just because the source is structured. Generate a derived artifact only when the source contains reusable detail patterns that a normal source page would likely flatten away.
+- When a derived artifact is justified, choose the format that preserves the source's reusable shape, such as a question bank, decision bank, failure-mode checklist, debug flow, or operator playbook.
 - Update related entity, concept, synthesis, or report pages only when the source materially changes them.
 - Update `notes/knowledge/wiki/index.md` when page inventory changes.
 - Append an entry to `notes/knowledge/wiki/log.md`.
@@ -81,6 +86,7 @@ Read additional wiki pages only after the index narrows the target.
 
 - Do not rewrite or paraphrase raw material in place.
 - Keep source pages grounded in the referenced source.
+- Compress wording when helpful, but do not compress away details that change interpretation, application, or decision quality.
 - Create concept pages only for named or reusable concepts worth carrying forward.
 - Do not create synthesis pages by default for every source; create them only when cross-source or higher-level synthesis is genuinely useful.
 - Prefer a small number of strong pages over many shallow pages.

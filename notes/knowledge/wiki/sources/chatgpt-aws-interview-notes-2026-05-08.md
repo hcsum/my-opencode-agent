@@ -57,3 +57,4 @@ The conversation spends the most time on the progression from EC2 to containers/
 ## Related Pages
 
 - [[concepts/aws-compute-abstraction-and-scaling-tradeoffs.md]]
+- [[reports/aws-interview-question-bank.md]]

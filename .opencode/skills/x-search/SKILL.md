@@ -25,24 +25,11 @@ printf '%s' '{"query":"<query>","limit":20}' | npx tsx .opencode/skills/x-search
 
 ## Search workflow
 
-1. Start short
-   - Begin with a short query, usually 1-3 words.
-   - Prefer the core topic, brand name, product name, hashtag, or person name first.
-   - Do not start with a long sentence-like query unless the user explicitly asks for a very specific search.
+Follow the global search guidance in `AGENTS.md`, then apply these X-specific rules:
 
-2. Iterate intentionally
-   - If results are too broad, narrow with one modifier at a time.
-   - If results are too narrow or empty, broaden, simplify, or rewrite the query.
-   - If a query fails, alter it and try again instead of stopping.
-   - Use multiple search rounds whenever needed until the user's request is actually satisfied.
-
-3. Escalate from broad to specific
-   - Try close variants, abbreviations, alternate wording, product aliases, and common misspellings.
-   - If useful, shift between topic words, company names, hashtags, and user handles.
-
-4. Stop when signal is sufficient
-   - Do not keep searching once the answer is clear.
-   - Do enough rounds to cover the topic well, but avoid redundant searches.
+1. Prefer X-native query forms when useful
+   - Shift between topic words, company names, hashtags, cashtags, and user handles.
+   - Use the shortest X-native form that is likely to surface the right conversation.
 
 5. Prioritize signal, not just matches
    - Prefer posts with meaningful engagement when choosing what to cite or trust most.

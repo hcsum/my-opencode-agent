@@ -7,16 +7,17 @@ description: Use this skill whenever the user wants to generate a morning report
 
 ### Summerize user's favorite news sources update
 - Should use real browser to access the websites
-- Provide a brief summary of the latest news from the websites
-- Should include a general overview of the news, and pick 2 news of each website to summarize in more details, including the key points and insights from the news 
-- Should be a comprehansive report that cover actual news details and insights, not just the headlines
+- Provide a concise but information-dense summary of the latest news from the websites
+- Include a general overview of each website's main themes for the day
+- Pick 2 important items from each website and summarize them with concrete details: key claims, evidence, numbers, causal links, constraints, and implications
+- The report should preserve decision-useful details, not just headlines or topic labels
+- Write summaries so they are useful without reopening the source
 - Attach the URLs of the news for user's reference
 - If website login credentials expried, use the credentials in `./notes` to log in and access the news
 
 ### Provide news about user's stock holdings and performance
 
 ### List user's todos for the day
-
 
 
 
