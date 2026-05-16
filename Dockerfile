@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /workspace
 
+ENV NODE_OPTIONS=--max-old-space-size=1536
+
 # Install OpenCode CLI globally
 RUN npm install -g opencode-ai
 
