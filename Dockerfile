@@ -9,9 +9,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /workspace
 
-# Install opencode CLI globally
-# If your opencode CLI package name differs, update this line
-RUN npm install -g opencode
+# Install OpenCode CLI globally
+RUN npm install -g opencode-ai
 
 # Copy package files first for layer caching
 COPY package*.json ./
