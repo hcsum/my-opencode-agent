@@ -65,13 +65,15 @@ main().catch((error) => {
   process.exit(1);
 });
 
+const BRIDGE_PROCESS_MARKERS = ["src/index.ts", "dist/index.js"];
+
 function acquireInstanceLock(): () => void {
   const lockPath = path.join(".data", "bridge.lock");
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
   try {
     const fd = fs.openSync(lockPath, "wx");
-    fs.writeFileSync(fd, String(process.pid), "utf8");
+    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid }), "utf8");
     let released = false;
 
     return () => {
@@ -85,7 +87,7 @@ function acquireInstanceLock(): () => void {
     if (err.code !== "EEXIST") throw error;
 
     const activePid = readActivePid(lockPath);
-    if (activePid && isPidAlive(activePid)) {
+    if (activePid && isBridgeProcessAlive(activePid)) {
       throw new Error(
         `[app] bridge already running with pid ${activePid}; refusing second instance`,
       );
@@ -99,11 +101,25 @@ function acquireInstanceLock(): () => void {
 function readActivePid(lockPath: string): number | undefined {
   try {
     const raw = fs.readFileSync(lockPath, "utf8").trim();
+    if (raw.startsWith("{")) {
+      const parsed = JSON.parse(raw) as { pid?: unknown };
+      return typeof parsed.pid === "number" && Number.isInteger(parsed.pid)
+        ? parsed.pid
+        : undefined;
+    }
     const pid = Number(raw);
     return Number.isInteger(pid) ? pid : undefined;
   } catch {
     return undefined;
   }
+}
+
+function isBridgeProcessAlive(pid: number): boolean {
+  if (!isPidAlive(pid)) return false;
+
+  const cmdline = readProcessCommandLine(pid);
+  if (!cmdline) return true;
+  return BRIDGE_PROCESS_MARKERS.some((marker) => cmdline.includes(marker));
 }
 
 function isPidAlive(pid: number): boolean {
@@ -112,5 +128,15 @@ function isPidAlive(pid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function readProcessCommandLine(pid: number): string | undefined {
+  if (process.platform !== "linux") return undefined;
+
+  try {
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
+  } catch {
+    return undefined;
   }
 }
