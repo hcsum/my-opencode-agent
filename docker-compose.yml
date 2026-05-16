@@ -1,0 +1,44 @@
+version: "3.8"
+
+services:
+  opencode-server:
+    build: .
+    container_name: opencode-server
+    command: npm run serve
+    env_file: .env
+    environment:
+      - OPENCODE_SERVE_PORT=4096
+    volumes:
+      # Mount workspace so server sees notes/, skills/, etc.
+      - .:/workspace
+      # Preserve container's node_modules and dist from image build
+      - node_modules:/workspace/node_modules
+      - dist:/workspace/dist
+      # Gmail OAuth credentials from host
+      - ~/.gmail-mcp:/root/.gmail-mcp:ro
+    ports:
+      - "4096:4096"
+    working_dir: /workspace
+    restart: unless-stopped
+
+  agent:
+    build: .
+    container_name: opencode-agent
+    command: npm start
+    env_file: .env
+    environment:
+      # Use Docker compose service name instead of 127.0.0.1
+      - OPENCODE_BASE_URL=http://opencode-server:4096
+    volumes:
+      - .:/workspace
+      - node_modules:/workspace/node_modules
+      - dist:/workspace/dist
+      - ~/.gmail-mcp:/root/.gmail-mcp:ro
+    working_dir: /workspace
+    restart: unless-stopped
+    depends_on:
+      - opencode-server
+
+volumes:
+  node_modules:
+  dist:

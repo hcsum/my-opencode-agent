@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Data & logs
+.data/
+*.log
+logs/
+
+# Environment
+.env
+.env.*
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation (keep README if needed)
+*.md
+!README.md
+
+# Coverage
+coverage/
