@@ -181,7 +181,7 @@ export class OpencodeSession {
 
     return this.waitForOutcome(sessionId, async () => {
       await this.ensureSuccess(
-        this.client.session.promptAsync({
+        this.client.session.prompt({
           path: { id: sessionId },
           body: {
             model: HARDCODED_MODEL,
@@ -463,15 +463,6 @@ export class OpencodeSession {
     tracker: OutcomeTracker,
     startedAt: number,
   ): Promise<TurnOutcome | undefined> {
-    const status = await this.unwrap<Record<string, { type?: string }>>(
-      this.client.session.status(),
-    );
-
-    const sessionStatus = status[sessionId]?.type;
-    if (sessionStatus && sessionStatus !== "idle") {
-      return undefined;
-    }
-
     const messages = await this.unwrapMessages(
       this.client.session.messages({
         path: { id: sessionId },
