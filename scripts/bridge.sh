@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [[ -f .env ]]; then
+if [[ -f .env && -z "${OPENCODE_BASE_URL:-}" ]]; then
   set -a
   source .env
   set +a
