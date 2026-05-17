@@ -1,0 +1,9 @@
+services:
+  agent:
+    volumes:
+      # Local development keeps source bind mounts for fast iteration.
+      - .:/workspace
+      - node_modules_dev:/workspace/node_modules
+
+volumes:
+  node_modules_dev:

@@ -9,10 +9,8 @@ services:
       - OPENCODE_BASE_URL=http://127.0.0.1:4096
       - BRIDGE_DISABLE_LOCK=true
     volumes:
-      # Mount workspace so server and bridge see notes/, skills/, etc.
-      - .:/workspace
-      # Preserve container's node_modules from image build
-      - node_modules:/workspace/node_modules
+      # Persist only runtime data; app code and dependencies come from the image.
+      - ./.data:/workspace/.data
       # Gmail OAuth credentials from host
       - ~/.gmail-mcp:/root/.gmail-mcp
       # Reuse full host OpenCode state so server sees auth, logs, DB, and session history
@@ -22,6 +20,3 @@ services:
       - "4096:4096"
     working_dir: /workspace
     restart: unless-stopped
-
-volumes:
-  node_modules:
