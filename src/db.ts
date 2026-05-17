@@ -217,6 +217,24 @@ export function updateWorkflowJobStatus(params: {
   );
 }
 
+export function incrementThreadFailures(threadId: string): number {
+  db.prepare(`
+    INSERT INTO thread_failures (thread_id, failure_count)
+    VALUES (?, 1)
+    ON CONFLICT(thread_id) DO UPDATE SET
+      failure_count = failure_count + 1,
+      last_failed_at = datetime('now')
+  `).run(threadId);
+  const row = db
+    .prepare("SELECT failure_count FROM thread_failures WHERE thread_id = ?")
+    .get(threadId) as { failure_count: number };
+  return row.failure_count;
+}
+
+export function resetThreadFailures(threadId: string): void {
+  db.prepare("DELETE FROM thread_failures WHERE thread_id = ?").run(threadId);
+}
+
 function createSchema(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS processed_messages (
@@ -256,6 +274,12 @@ function createSchema(): void {
       type TEXT NOT NULL DEFAULT '',
       pattern TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS thread_failures (
+      thread_id TEXT PRIMARY KEY,
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      last_failed_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
 }

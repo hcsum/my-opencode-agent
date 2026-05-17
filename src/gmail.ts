@@ -14,9 +14,11 @@ import { WorkflowRunner } from "./workflow.js";
 import {
   clearPendingPermission,
   getPendingPermission,
+  incrementThreadFailures,
   isProcessed,
   markProcessed,
   releaseClaim,
+  resetThreadFailures,
   upsertPendingPermission,
   tryClaimMessage,
 } from "./db.js";
@@ -276,9 +278,15 @@ export class GmailBridge {
     } catch (err) {
       releaseClaim(messageId);
       console.error(`[gmail] failed to process/reply thread ${threadId}`, err);
+      const failures = incrementThreadFailures(threadId);
+      console.warn(`[gmail] thread ${threadId} has failed ${failures} time(s) consecutively`);
+      if (failures >= 2) {
+        await this.opencode.invalidateSession(`gmail:${threadId}`);
+      }
       throw err;
     }
 
+    resetThreadFailures(threadId);
     markProcessed(messageId, threadId, subject, senderEmail);
   }
 

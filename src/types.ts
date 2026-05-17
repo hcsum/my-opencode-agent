@@ -8,6 +8,7 @@ export interface AppConfig {
   stateFile: string;
   gmailTo?: string;
   gmailPollIntervalMs: number;
+  opencodeModel?: { providerID: string; modelID: string };
 }
 
 export type WorkflowJobKind = "ingest" | "query" | "lint";

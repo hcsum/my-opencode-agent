@@ -306,7 +306,13 @@ curl -s "http://localhost:3456/close?target=ID"
 
 用 `/close` 关闭自己创建的 tab，必须保留用户原有的 tab 不受影响。
 
-Proxy 持续运行，不建议主动停止——重启后需要在浏览器中重新授权 CDP 连接。
+**Browserbase 模式（`provider: "browserbase"`）**：任务完成后必须调用 shutdown 释放云端 session，否则 session 会持续计费：
+
+```bash
+curl -s http://localhost:3456/shutdown
+```
+
+**本地浏览器模式（`provider: "local"`）**：Proxy 持续运行，不建议主动停止——重启后需要在浏览器中重新授权 CDP 连接。
 
 ## 信息核实类任务
 

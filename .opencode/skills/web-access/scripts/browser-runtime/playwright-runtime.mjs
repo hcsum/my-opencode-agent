@@ -27,10 +27,11 @@ export class PlaywrightRuntime {
 
   async health() {
     await this.init();
+    const connected = this.browser.isConnected();
     return {
       provider: 'browserbase',
       browserMode: 'browserbase',
-      connected: true,
+      connected,
       sessions: this.targets.size,
       chromePort: null,
       browserbaseSessionId: this.session.id,

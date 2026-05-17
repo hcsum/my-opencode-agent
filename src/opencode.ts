@@ -73,6 +73,7 @@ interface TextPartEvent {
 export type PermissionResponse = "once" | "always" | "reject";
 
 const OPENCODE_COMPLETION_POLL_MS = 3000;
+const OPENCODE_SESSION_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes
 
 export type TurnOutcome =
   | {
@@ -124,11 +125,6 @@ const CHANNEL_SESSION_TITLES: Record<string, string> = {
   gmail: "Gmail Andy",
 };
 
-const HARDCODED_MODEL = {
-  providerID: "openai",
-  modelID: "gpt-5.4",
-} as const;
-
 export class OpencodeSession {
   private readonly client;
   private readonly stateStore: StateStore;
@@ -151,6 +147,17 @@ export class OpencodeSession {
   }
 
   async sendTurn(channel: string, input: TurnInput): Promise<string> {
+    const sessionKey = input.sessionKey || channel;
+    try {
+      return await this.doSendTurn(channel, input);
+    } catch (err) {
+      if (!isSessionNotFound(err)) throw err;
+      await this.invalidateSession(sessionKey);
+      return this.doSendTurn(channel, input);
+    }
+  }
+
+  private async doSendTurn(channel: string, input: TurnInput): Promise<string> {
     const sessionId = await this.getOrCreateSessionId(channel, input);
     const body = buildPromptBody(channel, input);
 
@@ -158,7 +165,9 @@ export class OpencodeSession {
       this.client.session.prompt({
         path: { id: sessionId },
         body: {
-          model: HARDCODED_MODEL,
+          ...(this.config.opencodeModel
+            ? { model: this.config.opencodeModel }
+            : {}),
           parts: [{ type: "text", text: body }],
         },
       }),
@@ -176,6 +185,20 @@ export class OpencodeSession {
     channel: string,
     input: TurnInput,
   ): Promise<TurnOutcome> {
+    const sessionKey = input.sessionKey || channel;
+    try {
+      return await this.doSendTurnWithApproval(channel, input);
+    } catch (err) {
+      if (!isSessionNotFound(err)) throw err;
+      await this.invalidateSession(sessionKey);
+      return this.doSendTurnWithApproval(channel, input);
+    }
+  }
+
+  private async doSendTurnWithApproval(
+    channel: string,
+    input: TurnInput,
+  ): Promise<TurnOutcome> {
     const sessionId = await this.getOrCreateSessionId(channel, input);
     const body = buildPromptBody(channel, input);
 
@@ -184,7 +207,9 @@ export class OpencodeSession {
         this.client.session.promptAsync({
           path: { id: sessionId },
           body: {
-            model: HARDCODED_MODEL,
+            ...(this.config.opencodeModel
+              ? { model: this.config.opencodeModel }
+              : {}),
             parts: [{ type: "text", text: body }],
           },
         }),
@@ -213,6 +238,17 @@ export class OpencodeSession {
       },
       messageId,
     );
+  }
+
+  async invalidateSession(sessionKey: string): Promise<void> {
+    this.sessionPromises.delete(sessionKey);
+    const state = await this.loadState();
+    const sessions = { ...(state.sessions || {}) };
+    const staleId = sessions[sessionKey];
+    delete sessions[sessionKey];
+    this.stateCache = undefined;
+    await this.saveState({ ...state, sessions });
+    console.log(`[opencode] invalidated stale session ${staleId} for ${sessionKey}, will create new`);
   }
 
   private async getOrCreateSessionId(
@@ -302,6 +338,12 @@ export class OpencodeSession {
       await trigger();
 
       for await (const rawEvent of stream.stream) {
+        if (Date.now() - startedAt >= OPENCODE_SESSION_TIMEOUT_MS) {
+          throw new Error(
+            `OpenCode session timed out after ${OPENCODE_SESSION_TIMEOUT_MS / 60000} minutes without a final response`,
+          );
+        }
+
         if (Date.now() - lastPolledAt >= OPENCODE_COMPLETION_POLL_MS) {
           const polled = await this.pollForCompletedOutcome(
             sessionId,
@@ -386,7 +428,7 @@ export class OpencodeSession {
       );
       if (finalPolled) return finalPolled;
 
-      throw new Error("OpenCode event stream ended before the session completed");
+      throw new Error("OpenCode session did not produce a final response (stream ended; session may have been interrupted mid-task)");
     } finally {
       controller.abort();
     }
@@ -585,15 +627,21 @@ function buildBasicAuthHeader(
 function extractErrorMessage(error: unknown): string {
   if (!error) return "OpenCode request failed";
   if (typeof error === "string") return error;
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
+  if (typeof error === "object" && error !== null) {
+    const e = error as Record<string, unknown>;
+    if (typeof e.message === "string") return e.message;
+    // SDK error format: { name, data: { message } }
+    if (typeof e.data === "object" && e.data !== null) {
+      const d = e.data as Record<string, unknown>;
+      if (typeof d.message === "string") return d.message;
+    }
   }
   return "OpenCode request failed";
+}
+
+function isSessionNotFound(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.message.includes("Session not found");
 }
 
 function logUsedModel(
@@ -629,9 +677,9 @@ function findLatestCompletedAssistantMessage(
     isTerminalAssistantMessage(entry.info),
   );
 
-  const pool = terminalCandidates.length ? terminalCandidates : candidates;
+  if (!terminalCandidates.length) return undefined;
 
-  return pool.sort((a, b) => {
+  return terminalCandidates.sort((a, b) => {
     const aTime = a.info.time?.completed || a.info.time?.created || 0;
     const bTime = b.info.time?.completed || b.info.time?.created || 0;
     return bTime - aTime;

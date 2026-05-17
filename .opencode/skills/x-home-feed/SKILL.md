@@ -7,6 +7,14 @@ description: Read and summarize user's X (formerly Twitter) home feed
 
 If browser access is not already ready, load `web-access` first
 
+## When browser is unavailable
+
+If `check-deps.mjs` returns `ok: false` or `proxyReady: false` (e.g. `reason: "proxy_connect_timeout"`):
+
+- **Stop immediately. Do not read logs, debug, or retry.**
+- Reply to the user: "I couldn't access the browser to fetch your X feed. The browser proxy failed to start — please try again later."
+- Do not attempt any further tool calls.
+
 ## Command
 
 Run:

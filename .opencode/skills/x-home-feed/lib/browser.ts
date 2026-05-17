@@ -38,7 +38,7 @@ function parseJson(text: string): unknown {
   }
 }
 
-export async function callProxy<T = unknown>(input: {
+async function callProxyOnce<T = unknown>(input: {
   method: "GET" | "POST";
   endpoint: string;
   query?: Record<string, string | number | boolean | undefined>;
@@ -76,7 +76,9 @@ export async function callProxy<T = unknown>(input: {
                 ? parsed.error
                 : data.trim() ||
                   `Proxy request failed with status ${String(res.statusCode)}`;
-            reject(new Error(`${message}\n${config.webAccessHint}`));
+            const err = new Error(`${message}\n${config.webAccessHint}`);
+            (err as NodeJS.ErrnoException).code = "EHTTP";
+            reject(err);
             return;
           }
 
@@ -88,11 +90,36 @@ export async function callProxy<T = unknown>(input: {
     req.on("timeout", () => {
       req.destroy(new Error(config.webAccessHint));
     });
-    req.on("error", () => reject(new Error(config.webAccessHint)));
+    req.on("error", (err) => reject(err));
 
     if (input.body) req.write(input.body);
     req.end();
   });
+}
+
+export async function callProxy<T = unknown>(input: {
+  method: "GET" | "POST";
+  endpoint: string;
+  query?: Record<string, string | number | boolean | undefined>;
+  body?: string;
+}): Promise<T> {
+  const maxAttempts = 10;
+  const retryDelayMs = 1500;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await callProxyOnce<T>(input);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const isNotReady = code === "ECONNREFUSED" || code === "ENOENT";
+      if (!isNotReady || attempt === maxAttempts) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`${msg}\n${config.webAccessHint}`);
+      }
+      await new Promise((r) => setTimeout(r, retryDelayMs));
+    }
+  }
+  throw new Error(config.webAccessHint);
 }
 
 export async function openBackgroundTab(url: string): Promise<string> {
@@ -116,6 +143,7 @@ export async function closeBackgroundTab(targetId: string): Promise<void> {
     query: { target: targetId },
   });
 }
+
 
 export async function evalInTab<T = unknown>(
   targetId: string,

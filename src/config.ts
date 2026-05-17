@@ -22,6 +22,19 @@ function parseChatId(raw: string): number {
   return parsed;
 }
 
+function parseModel(
+  raw?: string,
+): { providerID: string; modelID: string } | undefined {
+  if (!raw?.trim()) return undefined;
+  const slash = raw.indexOf("/");
+  if (slash <= 0)
+    throw new Error(`OPENCODE_MODEL must be "provider/modelid", got: ${raw}`);
+  return {
+    providerID: raw.slice(0, slash).trim(),
+    modelID: raw.slice(slash + 1).trim(),
+  };
+}
+
 export function loadConfig(): AppConfig {
   return {
     telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
@@ -37,5 +50,6 @@ export function loadConfig(): AppConfig {
       process.env.STATE_FILE?.trim() || path.join(".data", "state.json"),
     gmailTo: process.env.GMAIL_TO?.trim() || undefined,
     gmailPollIntervalMs: Number(process.env.GMAIL_POLL_INTERVAL_MS) || 10000,
+    opencodeModel: parseModel(process.env.OPENCODE_MODEL),
   };
 }

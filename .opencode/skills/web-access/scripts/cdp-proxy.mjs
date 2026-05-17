@@ -176,9 +176,26 @@ const server = http.createServer(async (req, res) => {
     }, 404);
   } catch (error) {
     const statusCode = error?.statusCode || 500;
+    // If the error is a Playwright disconnect (browser/context closed), reset the runtime
+    // so the next request creates a fresh Browserbase session instead of reusing the dead one.
+    if (!error?.statusCode && isRuntimeDisconnected(error)) {
+      console.error('[cdp-proxy] browser disconnected, resetting runtime for next request:', error?.message);
+      runtime = null;
+    }
     sendJson(res, { error: error instanceof Error ? error.message : String(error) }, statusCode);
   }
 });
+
+function isRuntimeDisconnected(error) {
+  const msg = error?.message || '';
+  return (
+    msg.includes('Target page, context or browser has been closed') ||
+    msg.includes('Browser has been closed') ||
+    msg.includes('Underlying Browser is disconnected') ||
+    msg.includes('WebSocket is closed') ||
+    msg.includes('WebSocket is not open')
+  );
+}
 
 function checkPortAvailable(port) {
   return new Promise((resolve) => {
