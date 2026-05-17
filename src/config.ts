@@ -50,6 +50,7 @@ export function loadConfig(): AppConfig {
       process.env.STATE_FILE?.trim() || path.join(".data", "state.json"),
     gmailTo: process.env.GMAIL_TO?.trim() || undefined,
     gmailPollIntervalMs: Number(process.env.GMAIL_POLL_INTERVAL_MS) || 10000,
+    gmailNewerThan: process.env.GMAIL_NEWER_THAN?.trim() || "3d",
     opencodeModel: parseModel(process.env.OPENCODE_MODEL),
   };
 }

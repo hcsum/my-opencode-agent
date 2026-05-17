@@ -8,6 +8,7 @@ export interface AppConfig {
   stateFile: string;
   gmailTo?: string;
   gmailPollIntervalMs: number;
+  gmailNewerThan: string;
   opencodeModel?: { providerID: string; modelID: string };
 }
 

@@ -147,7 +147,7 @@ export class GmailBridge {
   private async pollForMessages(): Promise<void> {
     if (!this.gmail) return;
 
-    const query = `to:${this.config.gmailTo} newer_than:3d`;
+    const query = `to:${this.config.gmailTo} newer_than:${this.config.gmailNewerThan}`;
     console.log(`[gmail] polling: ${query}`);
     const res = await this.gmail.users.messages.list({
       userId: "me",
