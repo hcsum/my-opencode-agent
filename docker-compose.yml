@@ -9,6 +9,7 @@ services:
       - OPENCODE_BASE_URL=http://127.0.0.1:4096
       - BRIDGE_DISABLE_LOCK=true
       - BROWSERBASE_REGION=ap-southeast-1
+      - GMAIL_NEWER_THAN=10m
       # Optional: override the model set in .opencode/opencode.json per-deployment
       # - OPENCODE_MODEL=openai/gpt-5.4
     volumes:
