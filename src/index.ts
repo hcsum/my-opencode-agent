@@ -9,6 +9,8 @@ import { GmailBridge } from "./gmail.js";
 import { initDatabase } from "./db.js";
 import { getRuntimeLogPath, setupFileLogging } from "./logger.js";
 
+const BRIDGE_PROCESS_MARKERS = ["src/index.ts", "dist/index.js"];
+
 setupFileLogging();
 console.log(`[app] runtime log file: ${getRuntimeLogPath()}`);
 
@@ -65,9 +67,11 @@ main().catch((error) => {
   process.exit(1);
 });
 
-const BRIDGE_PROCESS_MARKERS = ["src/index.ts", "dist/index.js"];
-
 function acquireInstanceLock(): () => void {
+  if (process.env.BRIDGE_DISABLE_LOCK === "true") {
+    return () => {};
+  }
+
   const lockPath = path.join(".data", "bridge.lock");
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 

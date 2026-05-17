@@ -22,7 +22,6 @@ RUN npm ci
 
 # Copy source and build
 COPY . .
-RUN npm run build
 
 # Default command (overridden by docker-compose per service)
 CMD ["npm", "start"]

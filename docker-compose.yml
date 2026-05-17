@@ -7,12 +7,12 @@ services:
     environment:
       - OPENCODE_SERVE_PORT=4096
       - OPENCODE_BASE_URL=http://127.0.0.1:4096
+      - BRIDGE_DISABLE_LOCK=true
     volumes:
       # Mount workspace so server and bridge see notes/, skills/, etc.
       - .:/workspace
-      # Preserve container's node_modules and dist from image build
+      # Preserve container's node_modules from image build
       - node_modules:/workspace/node_modules
-      - dist:/workspace/dist
       # Gmail OAuth credentials from host
       - ~/.gmail-mcp:/root/.gmail-mcp
       # Reuse host OpenCode login/config so `opencode serve` can access the connected account
@@ -25,4 +25,3 @@ services:
 
 volumes:
   node_modules:
-  dist:
