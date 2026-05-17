@@ -181,7 +181,7 @@ export class OpencodeSession {
 
     return this.waitForOutcome(sessionId, async () => {
       await this.ensureSuccess(
-        this.client.session.prompt({
+        this.client.session.promptAsync({
           path: { id: sessionId },
           body: {
             model: HARDCODED_MODEL,

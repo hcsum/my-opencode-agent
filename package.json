@@ -16,7 +16,7 @@
     "validate-ingest": "tsx src/validate-ingest.ts"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^0.9.5",
+    "@opencode-ai/sdk": "^1.14.20",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^16.6.1",
     "googleapis": "^171.4.0",
