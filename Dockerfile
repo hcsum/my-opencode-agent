@@ -11,6 +11,8 @@ WORKDIR /workspace
 
 ENV NODE_OPTIONS=--max-old-space-size=1536
 
+RUN mkdir -p /root/.local/share/opencode /root/.config/opencode
+
 # Install OpenCode CLI globally
 RUN npm install -g opencode-ai
 

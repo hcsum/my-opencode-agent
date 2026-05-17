@@ -15,6 +15,9 @@ services:
       - dist:/workspace/dist
       # Gmail OAuth credentials from host
       - ~/.gmail-mcp:/root/.gmail-mcp:ro
+      # Reuse host OpenCode login/config so `opencode serve` can access the connected account
+      - ~/.local/share/opencode/auth.json:/root/.local/share/opencode/auth.json:ro
+      - ~/.config/opencode/opencode.json:/root/.config/opencode/opencode.json:ro
     ports:
       - "4096:4096"
     working_dir: /workspace
