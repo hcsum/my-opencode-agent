@@ -15,9 +15,9 @@ services:
       - node_modules:/workspace/node_modules
       # Gmail OAuth credentials from host
       - ~/.gmail-mcp:/root/.gmail-mcp
-      # Reuse host OpenCode login/config so `opencode serve` can access the connected account
-      - ~/.local/share/opencode/auth.json:/root/.local/share/opencode/auth.json:ro
-      - ~/.config/opencode/opencode.json:/root/.config/opencode/opencode.json:ro
+      # Reuse full host OpenCode state so server sees auth, logs, DB, and session history
+      - ~/.local/share/opencode:/root/.local/share/opencode
+      - ~/.config/opencode:/root/.config/opencode
     ports:
       - "4096:4096"
     working_dir: /workspace
