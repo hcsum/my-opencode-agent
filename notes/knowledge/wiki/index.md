@@ -8,6 +8,7 @@ This file is the primary navigation map for the knowledge wiki.
 - [[sources/web-cafe-topic-wcjodykcod-full-time-indie-recap.md]] - Web.Cafe 复盘文，围绕基准、MVP、滚动开发、埋点和分享页裂变总结全职出海实践。
 - [[sources/writing-tools-for-agents-anthropic.md]] - Anthropic guidance on designing, evaluating, and iterating on tools for LLM agents.
 - [[sources/chatgpt-aws-interview-notes-2026-05-08.md]] - Ingest of `/Users/sum/Downloads/ChatGPT-260508.txt`, a ChatGPT AWS interview-prep conversation focused on cloud primitive tradeoffs, scaling, and the EC2/ECS/Lambda abstraction ladder.
+- [[sources/opencode-telegram-bot-grinev.md]] - Telegram bot client for OpenCode CLI; discovered via awesome-opencode curated list.
 
 ## Entities
 
