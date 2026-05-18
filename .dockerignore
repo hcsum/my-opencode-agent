@@ -22,9 +22,5 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 
-# Documentation (keep README if needed)
-*.md
-!README.md
-
 # Coverage
 coverage/
