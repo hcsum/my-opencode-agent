@@ -1,31 +1,11 @@
 ---
 name: web-access
-license: MIT
-github: https://github.com/eze-is/web-access
 description: 所有联网操作必须通过此 skill 处理，包括：搜索、网页抓取、登录后操作、网络交互等。
-metadata:
-  author: 一泽Eze
-  version: "2.6.0"
 ---
 
 # web-access Skill
 
 ## 前置检查
-
-在开始联网操作前，先判断这次浏览器任务更适合哪种模式，并优先说明这条核心差异：
-
-- **Browserbase 云浏览器**：当 `BROWSERBASE_API_KEY` 已设置时，优先直接使用 Browserbase 云端 session；适合要云浏览器、代理、自动 CAPTCHA 的场景。
-
-Browserbase 持久化登录态约定：
-
-- 若设置 `BROWSERBASE_CONTEXT_ID`，代理创建 Browserbase session 时会自动带上该 context。
-- `BROWSERBASE_CONTEXT_PERSIST=true` 时，会把本次 session 新增的 cookies / localStorage / 站点数据回写到该 context。
-- 推荐做法：先创建一个固定 context，在 Browserbase 里手动登录一次，之后持续复用同一个 `BROWSERBASE_CONTEXT_ID`。
-
-- **主力浏览器**：可能需要用户人工确认远程调试授权；自动继承现有登录态、书签、插件。
-- **专用浏览器**：配置完成后日常运行通常不需要用户人工确认 debug access；与主力浏览器完全隔离。
-
-如果用户未明确指定，再进入浏览器模式引导。不能只让用户做二选一，必须先讲清差异、收益和代价。
 
 默认先运行自动检查命令：
 
@@ -36,22 +16,25 @@ node ./scripts/check-deps.mjs
 
 脚本输出约定：
 
-- `check-deps.mjs` 始终输出单个 JSON 对象，不输出文本日志。
-- 先读取 `ok` 判断成功或失败，再读取 `selectedMode`、`browserId`、`port`、`proxyReady`、`availableModes`、`selectedBecause` 等字段。
-- 失败时读取 `reason` 和 `guidance`，不要依赖类似 `browser: ok`、`proxy: ready` 这类文本。
+- `check-deps.mjs` 始终输出单个 JSON 对象。
+- 是否已经有浏览器可用，以 `ok` 为准，不要自己猜。
+- `ok: true` 表示当前已经有可用浏览器路径，直接继续任务，不要先让用户选模式。
+- `ok: false` 表示当前不可直接用，再读取 `reason` 和 `guidance`，进入浏览器模式引导。
+- `provider` 表示当前实际使用的是哪类浏览器提供方；`local` 表示本地 CDP 浏览器，`browserbase` 表示 Browserbase 云浏览器。
+- `selectedMode` 表示当前实际要使用的模式；只在 `ok: true` 时按它继续。
+- `browserId`、`port`、`proxyReady`、`availableModes`、`selectedBecause` 是补充信息。
+- 不要依赖类似 `browser: ok`、`proxy: ready` 这类文本。
 - `sitePatterns` 字段列出当前已有的站点经验文件名。
 
-自动检查行为：
+根据返回值决定下一步：
 
-- 若存在 `BROWSERBASE_API_KEY`：直接返回 ok，并走 Browserbase 云浏览器。
-- 若主力或专用任一可用：直接返回 ok，不询问。
-- 若主力和专用都可用：默认走专用浏览器。
-- 若都不可用：再进入浏览器模式引导询问用户。
+- 若 `ok: true`：直接使用当前可用模式继续任务，不询问用户选模式。
+- 若 `ok: false`：再进入浏览器模式引导，向用户说明差异并让用户选择。
 
-补充说明：
+只有在需要用户介入时，才解释这条核心差异：
 
-- `BROWSERBASE_API_KEY` 是云端切换开关；设置后不再尝试本地浏览器探测。
-- 未设置 `BROWSERBASE_API_KEY` 时，保留原有本地浏览器行为；若 agent 运行在云端且也没配 key，检查会按本地模式失败。
+- **主力浏览器**：可能需要用户人工确认远程调试授权；自动继承现有登录态、书签、插件。
+- **专用浏览器**：配置完成后日常运行通常不需要用户人工确认 debug access；与主力浏览器完全隔离。
 
 如果用户明确要用专用浏览器，先只问一次他要用哪个浏览器，然后把选择映射成稳定的 `browser-id`：
 
@@ -72,13 +55,7 @@ open -na "<Browser App Name>" --args \
   --user-data-dir="$HOME/.web-access/<browser-id>-dedicated-profile"
 ```
 
-然后运行：
-
-```bash
-node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
-```
-
-一旦已经选定专用浏览器，后续所有检查和连接都必须继续带上 `--browser dedicated --browser-id <browser-id>`，不要再运行默认检查命令，否则流程会重新进入自动选路。
+用户确认已启动后，重新运行默认检查命令，确认专用浏览器路径已经可用。
 
 补充约束：
 
@@ -203,11 +180,10 @@ node ./scripts/check-deps.mjs
 
 返回的 JSON 中：
 
-- `provider: "browserbase"` 表示当前走的是 Browserbase 云浏览器。
 - `provider: "local"` 表示当前走的是本地 CDP 浏览器。
+- `provider: "browserbase"` 表示当前走的是 Browserbase 云浏览器。
 - `selectedMode: "primary"` 表示当前选中了主力浏览器。
 - `selectedMode: "dedicated"` 表示当前选中了专用浏览器。
-- `selectedMode: "browserbase"` 表示当前选中了 Browserbase 云浏览器。
 - 默认命令不是“固定走主力浏览器”，而是自动在可用连接里选择；两者都可用时优先 dedicated。
 
 显式主力浏览器路径：
@@ -302,17 +278,15 @@ curl -s "http://localhost:3456/close?target=ID"
 
 登录完成后无需重启任何东西，直接刷新页面继续。若使用专用浏览器，后续同一 profile 会保留该登录态。
 
-### 任务结束
+### 任务结束，失败，或中断
 
-用 `/close` 关闭自己创建的 tab，必须保留用户原有的 tab 不受影响。
+用 `/close` 关闭自己创建的 tab，**必须**保留用户原有的 tab 不受影响。
 
-**Browserbase 模式（`provider: "browserbase"`）**：任务完成后必须调用 shutdown 释放云端 session，否则 session 会持续计费：
+如果 `provider` 不是 `local`，**必须**调用 shutdown 释放远程浏览器 session。不要把这一步当作可选清理；它是任务完成、失败、或中途放弃前都必须执行的硬约束。
 
 ```bash
 curl -s http://localhost:3456/shutdown
 ```
-
-**本地浏览器模式（`provider: "local"`）**：Proxy 持续运行，不建议主动停止——重启后需要在浏览器中重新授权 CDP 连接。
 
 ## 信息核实类任务
 

@@ -21,7 +21,7 @@ export async function resolveRuntimeAvailability(config) {
       dedicatedProfileDir: null,
       port: null,
       availableModes: ['browserbase'],
-      selectedBecause: 'browserbase_api_key_present',
+      selectedBecause: 'cloud_browser_configured',
     };
   }
 

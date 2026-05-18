@@ -1,6 +1,6 @@
 export async function createBrowserbaseSession(config) {
   if (!config.browserbaseApiKey) {
-    throw new Error('BROWSERBASE_API_KEY 未设置，无法创建 Browserbase session');
+    throw new Error('云浏览器凭据未配置，无法创建 Browserbase session');
   }
 
   const payload = {
@@ -51,19 +51,35 @@ export async function createBrowserbaseSession(config) {
 }
 
 export async function releaseBrowserbaseSession(config, sessionId) {
-  if (!sessionId || !config.browserbaseApiKey) return;
+  if (!sessionId || !config.browserbaseApiKey) {
+    return { released: false, skipped: true, sessionId };
+  }
   const payload = { status: 'REQUEST_RELEASE' };
   if (config.browserbaseProjectId) payload.projectId = config.browserbaseProjectId;
 
-  try {
-    await fetch(`${config.browserbaseApiBaseUrl}/v1/sessions/${sessionId}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-BB-API-Key': config.browserbaseApiKey,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10000),
-    });
-  } catch {}
+  const response = await fetch(`${config.browserbaseApiBaseUrl}/v1/sessions/${sessionId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-BB-API-Key': config.browserbaseApiKey,
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000),
+  });
+
+  const text = await response.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch {}
+
+  if (!response.ok) {
+    const detail = json?.error || json?.message || text || `HTTP ${response.status}`;
+    throw new Error(`Browserbase session 释放失败: ${detail}`);
+  }
+
+  return {
+    released: true,
+    sessionId,
+    statusCode: response.status,
+    response: json,
+  };
 }

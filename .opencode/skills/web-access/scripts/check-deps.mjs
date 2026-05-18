@@ -100,7 +100,7 @@ async function ensureProxy(config) {
     }
     if (i === 1) {
       hint = config.provider === 'browserbase'
-        ? 'Browserbase 模式下若持续超时，请检查 BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID 是否有效，以及云端网络是否可访问 api.browserbase.com。'
+        ? 'Browserbase 模式下若持续超时，请检查云浏览器凭据与项目配置是否有效，以及云端网络是否可访问 api.browserbase.com。'
         : config.browserMode === 'primary'
           ? '主力浏览器模式下，可能有远程调试授权弹窗，请点击“允许”后等待连接。'
           : '专用浏览器模式下通常不会有授权弹窗；若持续超时，请检查 dedicated profile 路径和启动参数是否一致。';

@@ -7,12 +7,16 @@ import net from 'node:net';
 import { createRuntime, loadRuntimeConfig, resolveRuntimeAvailability } from './browser-runtime/index.mjs';
 
 const PORT = parseInt(process.env.CDP_PROXY_PORT || '3456');
+const BROWSERBASE_IDLE_SHUTDOWN_MS = parseInt(process.env.BROWSERBASE_IDLE_SHUTDOWN_MS || '60000', 10);
 
 let runtime = null;
 let runtimeInfo = null;
 let runtimeConfig = loadRuntimeConfig(process.env);
 let runtimePromise = null;
 let shuttingDown = false;
+let idleShutdownTimer = null;
+let activeRequests = 0;
+let lastActivityAt = 0;
 
 async function ensureRuntime() {
   if (runtime) return runtime;
@@ -29,6 +33,57 @@ async function ensureRuntime() {
     return await runtimePromise;
   } finally {
     runtimePromise = null;
+  }
+}
+
+function isBrowserbaseRuntime() {
+  return runtimeInfo?.provider === 'browserbase';
+}
+
+function clearIdleShutdownTimer() {
+  if (!idleShutdownTimer) return;
+  clearTimeout(idleShutdownTimer);
+  idleShutdownTimer = null;
+}
+
+async function triggerIdleShutdown() {
+  if (shuttingDown || !isBrowserbaseRuntime() || activeRequests > 0 || !runtime) return;
+  const idleFor = Date.now() - lastActivityAt;
+  if (idleFor < BROWSERBASE_IDLE_SHUTDOWN_MS) {
+    scheduleIdleShutdown();
+    return;
+  }
+  try {
+    const release = await releaseRuntime();
+    console.log('[CDP Proxy] Browserbase idle shutdown complete', JSON.stringify(release));
+  } catch (error) {
+    console.error('[CDP Proxy] Browserbase idle shutdown failed:', error?.message || error);
+  }
+  await shutdown(0);
+}
+
+function scheduleIdleShutdown() {
+  clearIdleShutdownTimer();
+  if (shuttingDown || !isBrowserbaseRuntime() || activeRequests > 0 || !runtime) return;
+  idleShutdownTimer = setTimeout(() => {
+    idleShutdownTimer = null;
+    triggerIdleShutdown().catch((error) => {
+      console.error('[CDP Proxy] idle shutdown crashed:', error?.message || error);
+    });
+  }, BROWSERBASE_IDLE_SHUTDOWN_MS);
+  idleShutdownTimer.unref?.();
+}
+
+async function withRuntime(handler) {
+  clearIdleShutdownTimer();
+  activeRequests += 1;
+  try {
+    const activeRuntime = await ensureRuntime();
+    return await handler(activeRuntime);
+  } finally {
+    activeRequests = Math.max(0, activeRequests - 1);
+    lastActivityAt = Date.now();
+    scheduleIdleShutdown();
   }
 }
 
@@ -52,11 +107,13 @@ async function getHealth() {
 async function shutdown(code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  try {
-    await runtime?.shutdown?.();
-  } catch {}
+  clearIdleShutdownTimer();
   server.close(() => process.exit(code));
   setTimeout(() => process.exit(code), 500).unref?.();
+}
+
+async function releaseRuntime() {
+  return await runtime?.shutdown?.() ?? { released: false, skipped: true };
 }
 
 async function readBody(req) {
@@ -82,66 +139,65 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (pathname === '/shutdown') {
-      sendJson(res, { status: 'ok', shuttingDown: true });
+      const release = await releaseRuntime();
+      sendJson(res, { status: 'ok', shuttingDown: true, release });
       setTimeout(() => shutdown(0), 50).unref?.();
       return;
     }
 
-    const activeRuntime = await ensureRuntime();
-
     if (pathname === '/targets') {
-      sendJson(res, await activeRuntime.listTargets());
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.listTargets()));
       return;
     }
     if (pathname === '/new') {
-      sendJson(res, await activeRuntime.createTarget({ url: q.url || 'about:blank', background: q.background !== 'false' }));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.createTarget({ url: q.url || 'about:blank', background: q.background !== 'false' })));
       return;
     }
     if (pathname === '/close') {
-      sendJson(res, await activeRuntime.closeTarget(q.target));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.closeTarget(q.target)));
       return;
     }
     if (pathname === '/navigate') {
-      sendJson(res, await activeRuntime.navigate(q.target, q.url));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.navigate(q.target, q.url)));
       return;
     }
     if (pathname === '/activate') {
-      sendJson(res, await activeRuntime.activate(q.target));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.activate(q.target)));
       return;
     }
     if (pathname === '/back') {
-      sendJson(res, await activeRuntime.back(q.target));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.back(q.target)));
       return;
     }
     if (pathname === '/eval') {
       const expr = (await readBody(req)) || q.expr || 'document.title';
-      sendJson(res, await activeRuntime.evaluate(q.target, expr));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.evaluate(q.target, expr)));
       return;
     }
     if (pathname === '/click') {
       const selector = await readBody(req);
       if (!selector) return sendJson(res, { error: 'POST body 需要 CSS 选择器' }, 400);
-      sendJson(res, await activeRuntime.click(q.target, selector));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.click(q.target, selector)));
       return;
     }
     if (pathname === '/clickAt') {
       const selector = await readBody(req);
       if (!selector) return sendJson(res, { error: 'POST body 需要 CSS 选择器' }, 400);
-      sendJson(res, await activeRuntime.clickAt(q.target, selector));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.clickAt(q.target, selector)));
       return;
     }
     if (pathname === '/setFiles') {
       const body = JSON.parse(await readBody(req));
       if (!body.selector || !body.files) return sendJson(res, { error: '需要 selector 和 files 字段' }, 400);
-      sendJson(res, await activeRuntime.setFiles(q.target, body.selector, body.files));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.setFiles(q.target, body.selector, body.files)));
       return;
     }
     if (pathname === '/scroll') {
-      sendJson(res, await activeRuntime.scroll(q.target, { y: parseInt(q.y || '3000', 10), direction: q.direction || 'down' }));
+      sendJson(res, await withRuntime((activeRuntime) => activeRuntime.scroll(q.target, { y: parseInt(q.y || '3000', 10), direction: q.direction || 'down' })));
       return;
     }
     if (pathname === '/screenshot') {
-      const result = await activeRuntime.screenshot(q.target, { filePath: q.file || null, format: q.format || 'png' });
+      const result = await withRuntime((activeRuntime) => activeRuntime.screenshot(q.target, { filePath: q.file || null, format: q.format || 'png' }));
       if (result.filePath) {
         fs.writeFileSync(result.filePath, result.buffer);
         sendJson(res, { saved: result.filePath });
@@ -153,7 +209,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/info') {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.end(await activeRuntime.info(q.target));
+      res.end(await withRuntime((activeRuntime) => activeRuntime.info(q.target)));
       return;
     }
 

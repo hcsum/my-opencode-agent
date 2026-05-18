@@ -21,8 +21,9 @@ export class PlaywrightRuntime {
   async shutdown() {
     try { await this.browser.close(); } catch {}
     if (this.config.releaseBrowserbaseSession) {
-      await this.config.releaseBrowserbaseSession(this.session.id);
+      return await this.config.releaseBrowserbaseSession(this.session.id);
     }
+    return { released: false, skipped: true, sessionId: this.session.id };
   }
 
   async health() {

@@ -93,6 +93,7 @@ export class CdpRuntime {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     try { this.ws?.close?.(); } catch {}
+    return { released: false, skipped: true, provider: 'local' };
   }
 
   async health() {
