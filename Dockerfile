@@ -4,6 +4,7 @@ FROM node:22-slim
 # Install build tools for native modules (better-sqlite3)
 RUN apt-get update && apt-get install -y \
     build-essential \
+    curl \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
