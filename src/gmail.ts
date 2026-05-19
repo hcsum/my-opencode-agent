@@ -218,7 +218,7 @@ export class GmailBridge {
     });
 
     const textBody = stripQuotedReply(body).trim() || subject;
-    const content = `[Email from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${textBody}`;
+    const content = textBody;
 
     const pendingPermission = getPendingPermission(threadId);
     if (pendingPermission) {

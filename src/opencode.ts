@@ -121,7 +121,7 @@ export interface TurnInput {
 }
 
 const CHANNEL_SESSION_TITLES: Record<string, string> = {
-  gmail: "Gmail Andy",
+  gmail: "Andy",
 };
 
 export class OpencodeSession {
