@@ -2,28 +2,36 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ProxyAgent, fetch as undiciFetch } from "undici";
+import type { OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
 import type { gmail_v1 } from "googleapis";
-import type { OAuth2Client } from "google-auth-library";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
-import type { AppConfig } from "./types.js";
-import { SerialQueue } from "./queue.js";
-import { OpencodeSession } from "./opencode.js";
-import { WorkflowRunner } from "./workflow.js";
 import {
   clearPendingPermission,
+  clearPendingQuestion,
   getPendingPermission,
+  getPendingQuestion,
   incrementThreadFailures,
   isProcessed,
+  listActiveThreadRuns,
   markProcessed,
   releaseClaim,
   resetThreadFailures,
-  upsertPendingPermission,
   tryClaimMessage,
 } from "./db.js";
-import type { PendingPermissionRecord } from "./db.js";
-import type { PermissionResponse, TurnOutcome } from "./opencode.js";
+import type {
+  PendingPermissionRecord,
+  PendingQuestionRecord,
+} from "./db.js";
+import { OpencodeSession } from "./opencode.js";
+import type {
+  PermissionResponse,
+  RuntimeCallbacks,
+} from "./opencode-runtime.js";
+import { SerialQueue } from "./queue.js";
+import type { AppConfig } from "./types.js";
+import { WorkflowRunner } from "./workflow.js";
 
 interface ThreadMeta {
   senderEmail: string;
@@ -107,6 +115,7 @@ export class GmailBridge {
     this.userEmail = profile.data.emailAddress || "";
     console.log(`[gmail] connected as ${this.userEmail}`);
 
+    await this.resumeActiveRuns();
     await this.pollForMessages();
     this.schedulePoll();
 
@@ -129,8 +138,7 @@ export class GmailBridge {
     const backoffMs =
       this.consecutiveErrors > 0
         ? Math.min(
-            this.config.gmailPollIntervalMs *
-              Math.pow(2, this.consecutiveErrors),
+            this.config.gmailPollIntervalMs * Math.pow(2, this.consecutiveErrors),
             30 * 60 * 1000,
           )
         : this.config.gmailPollIntervalMs;
@@ -184,7 +192,6 @@ export class GmailBridge {
     if (!this.gmail) return;
 
     const startedAt = Date.now();
-
     const res = await this.gmail.users.messages.get({
       userId: "me",
       id: messageId,
@@ -202,12 +209,10 @@ export class GmailBridge {
       headers.find((h) => h.name?.toLowerCase() === "subject")?.value ||
       "(no subject)";
     const rfcMessageId =
-      headers.find((h) => h.name?.toLowerCase() === "message-id")?.value || "";
+      headers.find((h) => h.name?.toLowerCase() === "message-id")?.value ||
+      "";
 
-    const { name: senderName, email: senderEmail } = parseFromHeader(
-      fromHeader,
-    );
-
+    const { name: senderName, email: senderEmail } = parseFromHeader(fromHeader);
     const body = this.extractTextBody(message.payload) || "";
 
     this.threadMeta.set(threadId, {
@@ -218,7 +223,7 @@ export class GmailBridge {
     });
 
     const textBody = stripQuotedReply(body).trim() || subject;
-    const content = textBody;
+    const content = `[Email from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${textBody}`;
 
     const pendingPermission = getPendingPermission(threadId);
     if (pendingPermission) {
@@ -228,6 +233,24 @@ export class GmailBridge {
         textBody,
         pendingPermission,
       });
+      return;
+    }
+
+    const pendingQuestion = getPendingQuestion(threadId);
+    if (pendingQuestion) {
+      await this.handlePendingQuestion({
+        messageId,
+        threadId,
+        textBody,
+        pendingQuestion,
+      });
+      return;
+    }
+
+    if (this.opencode.hasActiveGmailRun(threadId)) {
+      await this.sendReply(threadId, buildAlreadyRunningReply());
+      await this.markRead(messageId);
+      markProcessed(messageId, threadId, subject, senderEmail);
       return;
     }
 
@@ -249,45 +272,55 @@ export class GmailBridge {
               parseInt(message.internalDate || String(Date.now()), 10),
             ),
           })
-        : await this.queue.enqueue(
-            `gmail from=${senderEmail} subject=${subject}`,
-            async () => {
-              const opencodeStartedAt = Date.now();
-              const response = await this.opencode.sendTurnWithApproval("gmail", {
-                text: content,
+        : await this.queue.enqueue(`gmail start ${threadId}`, async () => {
+            const opencodeStartedAt = Date.now();
+            const started = await this.opencode.startGmailRun(
+              {
+                threadId,
+                messageId,
+                senderEmail,
                 senderName,
-                chatTitle: subject,
+                subject,
+                rfcMessageId,
+                textBody,
+                content,
                 timestamp: new Date(
                   parseInt(message.internalDate || String(Date.now()), 10),
                 ),
                 sessionKey: `gmail:${threadId}`,
                 sessionTitle: `Gmail ${subject}`,
-              });
-              console.log(
-                `[gmail] opencode completed ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
-              );
-              return response;
-            },
-          );
+              },
+              this.buildRuntimeCallbacks(threadId),
+            );
+            console.log(
+              `[gmail] opencode run start ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
+            );
+            return started;
+          });
 
       console.log(
         `[gmail] queue+opencode completed ${messageId} in ${Date.now() - queuedAt}ms`,
       );
 
-      await this.finishMessage(messageId, threadId, result, startedAt);
+      if (typeof result === "string") {
+        await this.sendReply(threadId, result);
+        resetThreadFailures(threadId);
+        console.log(`[gmail] direct reply completed for thread ${threadId}`);
+      }
+      await this.markRead(messageId);
+      markProcessed(messageId, threadId, subject, senderEmail);
     } catch (err) {
       releaseClaim(messageId);
       console.error(`[gmail] failed to process/reply thread ${threadId}`, err);
       const failures = incrementThreadFailures(threadId);
-      console.warn(`[gmail] thread ${threadId} has failed ${failures} time(s) consecutively`);
+      console.warn(
+        `[gmail] thread ${threadId} has failed ${failures} time(s) consecutively`,
+      );
       if (failures >= 2) {
         await this.opencode.invalidateSession(`gmail:${threadId}`);
       }
       throw err;
     }
-
-    resetThreadFailures(threadId);
-    markProcessed(messageId, threadId, subject, senderEmail);
   }
 
   private async handlePendingPermission(params: {
@@ -304,62 +337,153 @@ export class GmailBridge {
         buildPermissionPrompt(params.pendingPermission, true),
       );
       await this.markRead(params.messageId);
+      markProcessed(
+        params.messageId,
+        params.threadId,
+        this.threadMeta.get(params.threadId)?.subject || "",
+        this.threadMeta.get(params.threadId)?.senderEmail || "",
+      );
       return;
     }
 
-    const outcome = await this.queue.enqueue(
-      `gmail permission ${params.pendingPermission.permissionId}`,
-      () =>
-        this.opencode.resolvePermission(
-          params.pendingPermission.sessionId,
-          params.pendingPermission.permissionId,
-          params.pendingPermission.messageId,
-          decision,
-        ),
-    );
-
-    await this.finishMessage(params.messageId, params.threadId, outcome, Date.now());
-  }
-
-  private async finishMessage(
-    messageId: string,
-    threadId: string,
-    outcome: TurnOutcome | string,
-    startedAt: number,
-  ): Promise<void> {
-    const replyStartedAt = Date.now();
-
-    if (typeof outcome === "string") {
-      clearPendingPermission(threadId);
-      await this.sendReply(threadId, outcome);
-    } else if (outcome.kind === "completed") {
-      clearPendingPermission(threadId);
-      await this.sendReply(threadId, outcome.text);
-    } else {
-      upsertPendingPermission({
-        threadId,
-        sessionId: outcome.permission.sessionId,
-        permissionId: outcome.permission.permissionId,
-        messageId: outcome.permission.messageId,
-        title: outcome.permission.title,
-        type: outcome.permission.type,
-        pattern: outcome.permission.pattern,
-      });
-      await this.sendReply(threadId, buildPermissionPrompt(outcome.permission));
+    try {
+      await this.queue.enqueue(
+        `gmail permission ${params.pendingPermission.permissionId}`,
+        () =>
+          this.opencode.replyPermission(
+            params.threadId,
+            params.pendingPermission.permissionId,
+            decision,
+            this.buildRuntimeCallbacks(params.threadId),
+          ),
+      );
+    } catch (err) {
+      await this.handleReplyForwardFailure(params.threadId, "permission", err);
     }
 
-    console.log(
-      `[gmail] reply sent ${messageId} in ${Date.now() - replyStartedAt}ms`,
+    await this.markRead(params.messageId);
+    markProcessed(
+      params.messageId,
+      params.threadId,
+      this.threadMeta.get(params.threadId)?.subject || "",
+      this.threadMeta.get(params.threadId)?.senderEmail || "",
+    );
+  }
+
+  private async handlePendingQuestion(params: {
+    messageId: string;
+    threadId: string;
+    textBody: string;
+    pendingQuestion: PendingQuestionRecord;
+  }): Promise<void> {
+    const answers = parseQuestionResponse(
+      params.textBody,
+      params.pendingQuestion.questions,
     );
 
-    const markReadStartedAt = Date.now();
-    await this.markRead(messageId);
-    console.log(
-      `[gmail] marked read ${messageId} in ${Date.now() - markReadStartedAt}ms`,
+    if (!answers) {
+      await this.sendReply(
+        params.threadId,
+        buildQuestionPrompt(params.pendingQuestion, true),
+      );
+      await this.markRead(params.messageId);
+      markProcessed(
+        params.messageId,
+        params.threadId,
+        this.threadMeta.get(params.threadId)?.subject || "",
+        this.threadMeta.get(params.threadId)?.senderEmail || "",
+      );
+      return;
+    }
+
+    try {
+      await this.queue.enqueue(
+        `gmail question ${params.pendingQuestion.questionId}`,
+        () =>
+          this.opencode.replyQuestion(
+            params.threadId,
+            params.pendingQuestion.questionId,
+            answers,
+            this.buildRuntimeCallbacks(params.threadId),
+          ),
+      );
+    } catch (err) {
+      await this.handleReplyForwardFailure(params.threadId, "question", err);
+    }
+
+    await this.markRead(params.messageId);
+    markProcessed(
+      params.messageId,
+      params.threadId,
+      this.threadMeta.get(params.threadId)?.subject || "",
+      this.threadMeta.get(params.threadId)?.senderEmail || "",
     );
-    console.log(
-      `[gmail] replied to thread ${threadId} total=${Date.now() - startedAt}ms`,
+  }
+
+  private async handleReplyForwardFailure(
+    threadId: string,
+    kind: "permission" | "question",
+    err: unknown,
+  ): Promise<void> {
+    console.error(`[gmail] ${kind} reply forwarding failed for thread ${threadId}`, err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+
+    if (this.opencode.hasActiveGmailRun(threadId)) {
+      await this.sendReply(
+        threadId,
+        `I couldn't deliver your ${kind} reply this time (${errorMessage}). Please reply again with your response.`,
+      );
+      return;
+    }
+
+    if (kind === "permission") {
+      clearPendingPermission(threadId);
+    } else {
+      clearPendingQuestion(threadId);
+    }
+    await this.sendReply(
+      threadId,
+      buildFailureReply(
+        `This conversation is no longer active (${errorMessage}). Reply with a fresh request to start over.`,
+      ),
     );
+  }
+
+  private async resumeActiveRuns(): Promise<void> {
+    for (const run of listActiveThreadRuns()) {
+      this.threadMeta.set(run.threadId, {
+        senderEmail: run.senderEmail,
+        senderName: run.senderName,
+        subject: run.subject,
+        messageId: run.rfcMessageId,
+      });
+      await this.opencode.resumeGmailRun(
+        run.threadId,
+        this.buildRuntimeCallbacks(run.threadId),
+      );
+    }
+  }
+
+  private buildRuntimeCallbacks(threadId: string): RuntimeCallbacks {
+    return {
+      onPermission: async (request) => {
+        await this.sendReply(threadId, buildPermissionPrompt(request));
+      },
+      onQuestion: async (request) => {
+        await this.sendReply(threadId, buildQuestionPrompt(request));
+      },
+      onComplete: async (text) => {
+        await this.sendReply(threadId, text);
+        resetThreadFailures(threadId);
+      },
+      onFailed: async (error) => {
+        const failures = incrementThreadFailures(threadId);
+        if (failures >= 2) {
+          await this.opencode.invalidateSession(`gmail:${threadId}`);
+        }
+        await this.sendReply(threadId, buildFailureReply(error));
+      },
+    };
   }
 
   private extractTextBody(
@@ -367,10 +491,7 @@ export class GmailBridge {
   ): string {
     if (!payload) return "";
 
-    if (
-      payload.mimeType === "text/plain" &&
-      payload.body?.data
-    ) {
+    if (payload.mimeType === "text/plain" && payload.body?.data) {
       return Buffer.from(payload.body.data, "base64url").toString("utf8");
     }
 
@@ -384,10 +505,7 @@ export class GmailBridge {
     return "";
   }
 
-  private async sendReply(
-    threadId: string,
-    text: string,
-  ): Promise<void> {
+  private async sendReply(threadId: string, text: string): Promise<void> {
     if (!this.gmail) return;
 
     const meta = this.threadMeta.get(threadId);
@@ -437,9 +555,7 @@ export class GmailBridge {
   }
 
   private setupProxy(): void {
-    const proxy =
-      process.env.HTTPS_PROXY?.trim() ||
-      process.env.https_proxy?.trim();
+    const proxy = process.env.HTTPS_PROXY?.trim() || process.env.https_proxy?.trim();
 
     if (!proxy) return;
 
@@ -565,10 +681,7 @@ function parsePermissionResponse(text: string): PermissionResponse | undefined {
 }
 
 function buildPermissionPrompt(
-  permission: Pick<
-    PendingPermissionRecord,
-    "title" | "type" | "pattern"
-  >,
+  permission: Pick<PendingPermissionRecord, "title" | "type" | "pattern">,
   remindOnly = false,
 ): string {
   const lines = [
@@ -587,6 +700,107 @@ function buildPermissionPrompt(
   );
 
   return lines.join("\n");
+}
+
+function buildQuestionPrompt(
+  question: Pick<PendingQuestionRecord, "questions">,
+  remindOnly = false,
+): string {
+  const lines = [
+    remindOnly
+      ? "This thread is waiting for your answer before I can continue."
+      : "I need your answer before I can continue this request.",
+    "Reply in plain text using one non-empty line per question, in the same order.",
+  ];
+
+  question.questions.forEach((item, index) => {
+    lines.push("");
+    lines.push(`${index + 1}. ${item.header}: ${item.question}`);
+    if (item.options.length > 0) {
+      lines.push(`Options: ${item.options.map((option) => option.label).join(", ")}`);
+    }
+    if (item.multiple) {
+      lines.push("You may choose multiple options by separating labels with commas.");
+    }
+    if (item.custom !== false) {
+      lines.push("Custom text is also allowed if none of the labels fit.");
+    }
+  });
+
+  return lines.join("\n");
+}
+
+function parseQuestionResponse(
+  text: string,
+  questions: PendingQuestionRecord["questions"],
+): string[][] | undefined {
+  const normalized = stripQuotedReply(text)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (questions.length === 0) return [];
+  if (normalized.length === 0) return undefined;
+
+  const rawAnswers =
+    questions.length === 1 ? [normalized.join(" ")] : normalized.slice(0, questions.length);
+
+  if (rawAnswers.length < questions.length) {
+    return undefined;
+  }
+
+  const parsed = questions.map((question, index) =>
+    parseSingleQuestionAnswer(rawAnswers[index], question),
+  );
+  return parsed.every(Boolean) ? (parsed as string[][]) : undefined;
+}
+
+function parseSingleQuestionAnswer(
+  answer: string,
+  question: PendingQuestionRecord["questions"][number],
+): string[] | undefined {
+  const raw = answer.trim();
+  if (!raw) return undefined;
+
+  if (question.options.length === 0) {
+    return [raw];
+  }
+
+  const labelMap = new Map(
+    question.options.map((option) => [option.label.trim().toUpperCase(), option.label]),
+  );
+  const parts = question.multiple
+    ? raw
+        .split(/[,，;；]/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [raw];
+
+  const matched = parts
+    .map((part) => labelMap.get(part.toUpperCase()))
+    .filter((item): item is string => Boolean(item));
+
+  if (matched.length > 0) {
+    return question.multiple ? matched : [matched[0]];
+  }
+
+  if (question.custom === false) {
+    return undefined;
+  }
+
+  return [raw];
+}
+
+function buildAlreadyRunningReply(): string {
+  return "This thread already has a request in progress. I will continue the active run and reply here when it finishes.";
+}
+
+function buildFailureReply(error: string): string {
+  return [
+    "I could not complete this request.",
+    `Error: ${error}`,
+    "Reply again in this thread if you want me to retry.",
+  ].join("\n");
 }
 
 function isRevokedRefreshTokenError(error: unknown): boolean {

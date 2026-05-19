@@ -11,6 +11,26 @@ export interface AppConfig {
 
 export type WorkflowJobKind = "ingest" | "query" | "lint";
 
+export type ThreadRunStatus =
+  | "running"
+  | "waiting_permission"
+  | "waiting_question"
+  | "completed"
+  | "failed";
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionPrompt {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiple?: boolean;
+  custom?: boolean;
+}
+
 export type IngestLanguageMode = "source-original-wiki-zh" | "all-zh" | "preserve-language";
 
 export type WorkflowJobStatus =

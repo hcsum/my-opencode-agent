@@ -3,7 +3,12 @@ import path from "node:path";
 
 import BetterSqlite3 from "better-sqlite3";
 
-import type { WorkflowJobKind, WorkflowJobStatus } from "./types.js";
+import type {
+  QuestionPrompt,
+  ThreadRunStatus,
+  WorkflowJobKind,
+  WorkflowJobStatus,
+} from "./types.js";
 
 const DB_DIR = ".data";
 const DB_PATH = path.join(DB_DIR, "gmail.db");
@@ -21,11 +26,36 @@ export interface PendingPermissionRecord {
   pattern: string;
 }
 
+export interface PendingQuestionRecord {
+  threadId: string;
+  sessionId: string;
+  questionId: string;
+  messageId: string;
+  questions: QuestionPrompt[];
+}
+
+export interface ThreadRunRecord {
+  threadId: string;
+  sessionKey: string;
+  sessionId: string;
+  gmailMessageId: string;
+  senderEmail: string;
+  senderName: string;
+  subject: string;
+  rfcMessageId: string;
+  lastUserText: string;
+  status: ThreadRunStatus;
+  lastError: string;
+  startedAtMs: number;
+  updatedAtMs: number;
+}
+
 export function initDatabase(): void {
   fs.mkdirSync(DB_DIR, { recursive: true });
   db = new BetterSqlite3(DB_PATH);
   db.pragma("journal_mode = WAL");
   createSchema();
+  runMigrations();
 }
 
 export function isProcessed(gmailMessageId: string): boolean {
@@ -147,6 +177,186 @@ export function clearPendingPermission(threadId: string): void {
   db.prepare("DELETE FROM pending_permissions WHERE thread_id = ?").run(threadId);
 }
 
+export function getPendingQuestion(
+  threadId: string,
+): PendingQuestionRecord | undefined {
+  const row = db
+    .prepare(
+      `SELECT
+         thread_id,
+         session_id,
+         question_id,
+         message_id,
+         questions_json
+       FROM pending_questions
+       WHERE thread_id = ?`,
+    )
+    .get(threadId) as
+    | {
+        thread_id: string;
+        session_id: string;
+        question_id: string;
+        message_id: string;
+        questions_json: string;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+
+  return {
+    threadId: row.thread_id,
+    sessionId: row.session_id,
+    questionId: row.question_id,
+    messageId: row.message_id,
+    questions: parseQuestions(row.questions_json),
+  };
+}
+
+export function upsertPendingQuestion(question: PendingQuestionRecord): void {
+  db.prepare(
+    `INSERT INTO pending_questions (
+       thread_id,
+       session_id,
+       question_id,
+       message_id,
+       questions_json,
+       updated_at
+     ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(thread_id) DO UPDATE SET
+       session_id = excluded.session_id,
+       question_id = excluded.question_id,
+       message_id = excluded.message_id,
+       questions_json = excluded.questions_json,
+       updated_at = datetime('now')`,
+  ).run(
+    question.threadId,
+    question.sessionId,
+    question.questionId,
+    question.messageId,
+    JSON.stringify(question.questions),
+  );
+}
+
+export function clearPendingQuestion(threadId: string): void {
+  db.prepare("DELETE FROM pending_questions WHERE thread_id = ?").run(threadId);
+}
+
+export function getThreadRun(threadId: string): ThreadRunRecord | undefined {
+  const row = db
+    .prepare(
+      `SELECT
+         thread_id,
+         session_key,
+         session_id,
+         gmail_message_id,
+         sender_email,
+         sender_name,
+         subject,
+         rfc_message_id,
+         last_user_text,
+         status,
+         last_error,
+         started_at_ms,
+         updated_at_ms
+       FROM thread_runs
+       WHERE thread_id = ?`,
+    )
+    .get(threadId) as ThreadRunRow | undefined;
+
+  return row ? mapThreadRunRow(row) : undefined;
+}
+
+export function listActiveThreadRuns(): ThreadRunRecord[] {
+  const rows = db
+    .prepare(
+      `SELECT
+         thread_id,
+         session_key,
+         session_id,
+         gmail_message_id,
+         sender_email,
+         sender_name,
+         subject,
+         rfc_message_id,
+         last_user_text,
+         status,
+         last_error,
+         started_at_ms,
+         updated_at_ms
+       FROM thread_runs
+       WHERE status IN ('running', 'waiting_permission', 'waiting_question')
+       ORDER BY updated_at_ms ASC`,
+    )
+    .all() as ThreadRunRow[];
+
+  return rows.map(mapThreadRunRow);
+}
+
+export function upsertThreadRun(run: ThreadRunRecord): void {
+  db.prepare(
+    `INSERT INTO thread_runs (
+       thread_id,
+       session_key,
+       session_id,
+       gmail_message_id,
+       sender_email,
+       sender_name,
+       subject,
+       rfc_message_id,
+       last_user_text,
+       status,
+       last_error,
+       started_at_ms,
+       updated_at_ms
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(thread_id) DO UPDATE SET
+       session_key = excluded.session_key,
+       session_id = excluded.session_id,
+       gmail_message_id = excluded.gmail_message_id,
+       sender_email = excluded.sender_email,
+       sender_name = excluded.sender_name,
+       subject = excluded.subject,
+       rfc_message_id = excluded.rfc_message_id,
+       last_user_text = excluded.last_user_text,
+       status = excluded.status,
+       last_error = excluded.last_error,
+       started_at_ms = excluded.started_at_ms,
+       updated_at_ms = excluded.updated_at_ms`,
+  ).run(
+    run.threadId,
+    run.sessionKey,
+    run.sessionId,
+    run.gmailMessageId,
+    run.senderEmail,
+    run.senderName,
+    run.subject,
+    run.rfcMessageId,
+    run.lastUserText,
+    run.status,
+    run.lastError,
+    run.startedAtMs,
+    run.updatedAtMs,
+  );
+}
+
+export function updateThreadRunStatus(params: {
+  threadId: string;
+  status: ThreadRunStatus;
+  lastError?: string;
+  updatedAtMs?: number;
+}): void {
+  db.prepare(
+    `UPDATE thread_runs
+     SET status = ?, last_error = ?, updated_at_ms = ?
+     WHERE thread_id = ?`,
+  ).run(
+    params.status,
+    params.lastError || "",
+    params.updatedAtMs || Date.now(),
+    params.threadId,
+  );
+}
+
 export function createWorkflowJob(params: {
   kind: WorkflowJobKind;
   sourceChannel: string;
@@ -235,6 +445,49 @@ export function resetThreadFailures(threadId: string): void {
   db.prepare("DELETE FROM thread_failures WHERE thread_id = ?").run(threadId);
 }
 
+interface ThreadRunRow {
+  thread_id: string;
+  session_key: string;
+  session_id: string;
+  gmail_message_id: string;
+  sender_email: string;
+  sender_name: string;
+  subject: string;
+  rfc_message_id: string;
+  last_user_text: string;
+  status: ThreadRunStatus;
+  last_error: string;
+  started_at_ms: number;
+  updated_at_ms: number;
+}
+
+function mapThreadRunRow(row: ThreadRunRow): ThreadRunRecord {
+  return {
+    threadId: row.thread_id,
+    sessionKey: row.session_key,
+    sessionId: row.session_id,
+    gmailMessageId: row.gmail_message_id,
+    senderEmail: row.sender_email,
+    senderName: row.sender_name,
+    subject: row.subject,
+    rfcMessageId: row.rfc_message_id,
+    lastUserText: row.last_user_text,
+    status: row.status,
+    lastError: row.last_error,
+    startedAtMs: row.started_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function parseQuestions(raw: string): QuestionPrompt[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as QuestionPrompt[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function createSchema(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS processed_messages (
@@ -276,10 +529,55 @@ function createSchema(): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS pending_questions (
+      thread_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      question_id TEXT NOT NULL,
+      message_id TEXT NOT NULL DEFAULT '',
+      questions_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS thread_runs (
+      thread_id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      gmail_message_id TEXT NOT NULL DEFAULT '',
+      sender_email TEXT NOT NULL DEFAULT '',
+      sender_name TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL DEFAULT '',
+      rfc_message_id TEXT NOT NULL DEFAULT '',
+      last_user_text TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      last_error TEXT NOT NULL DEFAULT '',
+      started_at_ms INTEGER NOT NULL DEFAULT 0,
+      updated_at_ms INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS thread_failures (
       thread_id TEXT PRIMARY KEY,
       failure_count INTEGER NOT NULL DEFAULT 0,
       last_failed_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+}
+
+function runMigrations(): void {
+  // Backfill columns on prod DBs that pre-date these fields.
+  ensureColumn("pending_permissions", "title", "title TEXT NOT NULL DEFAULT ''");
+  ensureColumn("pending_permissions", "type", "type TEXT NOT NULL DEFAULT ''");
+  ensureColumn("pending_permissions", "pattern", "pattern TEXT NOT NULL DEFAULT ''");
+  ensureColumn("pending_permissions", "updated_at", "updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
+}
+
+function ensureColumn(table: string, column: string, definition: string): void {
+  const rows = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as Array<{ name: string }>;
+
+  if (rows.some((row) => row.name === column)) {
+    return;
+  }
+
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
 }
