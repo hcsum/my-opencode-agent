@@ -33,7 +33,7 @@ Assist user to achieve his goals. Don't just advise user what to do. With all th
 
 ## Development
 
-- `npm run dev` starts the Telegram bridge
+- `npm run dev` starts the bridge service
 - `npm run typecheck` validates TypeScript
 - `npm run build` compiles to `dist/`
 

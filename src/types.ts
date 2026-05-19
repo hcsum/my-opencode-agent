@@ -1,10 +1,7 @@
 export interface AppConfig {
-  telegramBotToken: string;
-  telegramAllowedChatId: number;
   opencodeBaseUrl: string;
   opencodeServerUsername?: string;
   opencodeServerPassword?: string;
-  telegramSessionTitle: string;
   stateFile: string;
   gmailTo?: string;
   gmailPollIntervalMs: number;
@@ -31,7 +28,6 @@ export interface WorkflowCommand {
 }
 
 export interface PersistedState {
-  sessionId?: string;
   sessions?: Record<string, string>;
   updatedAt?: string;
 }

@@ -14,14 +14,6 @@ function required(name: string): string {
   return value;
 }
 
-function parseChatId(raw: string): number {
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed)) {
-    throw new Error("TELEGRAM_ALLOWED_CHAT_ID must be an integer");
-  }
-  return parsed;
-}
-
 function parseModel(
   raw?: string,
 ): { providerID: string; modelID: string } | undefined {
@@ -37,15 +29,11 @@ function parseModel(
 
 export function loadConfig(): AppConfig {
   return {
-    telegramBotToken: required("TELEGRAM_BOT_TOKEN"),
-    telegramAllowedChatId: parseChatId(required("TELEGRAM_ALLOWED_CHAT_ID")),
     opencodeBaseUrl: required("OPENCODE_BASE_URL"),
     opencodeServerUsername:
       process.env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
     opencodeServerPassword:
       process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
-    telegramSessionTitle:
-      process.env.TELEGRAM_SESSION_TITLE?.trim() || "Telegram Andy",
     stateFile:
       process.env.STATE_FILE?.trim() || path.join(".data", "state.json"),
     gmailTo: process.env.GMAIL_TO?.trim() || undefined,

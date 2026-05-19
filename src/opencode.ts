@@ -121,7 +121,6 @@ export interface TurnInput {
 }
 
 const CHANNEL_SESSION_TITLES: Record<string, string> = {
-  telegram: "Telegram Andy",
   gmail: "Gmail Andy",
 };
 
@@ -279,20 +278,7 @@ export class OpencodeSession {
       return sessions[sessionKey];
     }
 
-    if (channel === "telegram" && state.sessionId) {
-      sessions[sessionKey] = state.sessionId;
-      await this.saveState({ ...state, sessions });
-      console.log(
-        `[opencode] migrated legacy session ${state.sessionId} to ${sessionKey}`,
-      );
-      return state.sessionId;
-    }
-
-    const title =
-      input.sessionTitle ||
-      (channel === "telegram"
-        ? this.config.telegramSessionTitle
-        : CHANNEL_SESSION_TITLES[channel] || `${channel} Andy`);
+    const title = input.sessionTitle || CHANNEL_SESSION_TITLES[channel] || `${channel} Andy`;
 
     const session = await this.unwrap<SessionRecord>(
       this.client.session.create({

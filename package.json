@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Telegram bridge for a shared OpenCode server",
+  "description": "OpenCode workspace with skills, notes, and Gmail bridge",
   "scripts": {
     "bridge": "bash scripts/bridge.sh",
     "dev": "tsx src/index.ts",
@@ -21,7 +21,6 @@
     "dotenv": "^16.6.1",
     "googleapis": "^171.4.0",
     "playwright-core": "^1.54.1",
-    "telegraf": "^4.16.3",
     "undici": "^7.25.0"
   },
   "devDependencies": {
