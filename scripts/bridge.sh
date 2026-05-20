@@ -10,4 +10,6 @@ if [[ -f .env && -z "${OPENCODE_BASE_URL:-}" ]]; then
   set +a
 fi
 
+bash "$ROOT_DIR/scripts/ensure-notes.sh"
+
 exec npx tsx src/index.ts "$@"

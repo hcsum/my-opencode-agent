@@ -10,6 +10,8 @@ if [[ -f .env ]]; then
   set +a
 fi
 
+bash "$ROOT_DIR/scripts/ensure-notes.sh"
+
 export OPENCODE_DB="$ROOT_DIR/.data/opencode.db"
 
 exec opencode "$@"

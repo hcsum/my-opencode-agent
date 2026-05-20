@@ -10,6 +10,8 @@ if [[ -f .env && -z "${OPENCODE_SERVE_PORT:-}" && -z "${HTTPS_PROXY:-${https_pro
   set +a
 fi
 
+bash "$ROOT_DIR/scripts/ensure-notes.sh"
+
 mkdir -p "$ROOT_DIR/.data"
 
 export OPENCODE_DB="$ROOT_DIR/.data/opencode.db"

@@ -15,6 +15,8 @@ services:
     volumes:
       # Persist only runtime data; app code and dependencies come from the image.
       - ./.data:/workspace/.data
+      # Keep notes as a live host repo instead of baking them into the image.
+      - ./notes:/workspace/notes
       # Gmail OAuth credentials from host
       - ~/.gmail-mcp:/root/.gmail-mcp
       # Reuse full host OpenCode state so server sees auth, logs, DB, and session history
