@@ -27,8 +27,14 @@ if [[ -d "$NOTES_DIR/.git" ]]; then
 fi
 
 if [[ -e "$NOTES_DIR" ]]; then
-  echo "[notes] expected $NOTES_DIR to be a git repo, but it exists without .git" >&2
-  exit 1
+  if [[ -z "$NOTES_REPO_URL" ]]; then
+    echo "[notes] expected $NOTES_DIR to be a git repo, but it exists without .git" >&2
+    exit 1
+  fi
+
+  BACKUP_DIR="$ROOT_DIR/notes.pre-git-migration.$(date +%Y%m%d-%H%M%S)"
+  echo "[notes] moving existing non-git directory to $BACKUP_DIR"
+  mv "$NOTES_DIR" "$BACKUP_DIR"
 fi
 
 if [[ -z "$NOTES_REPO_URL" ]]; then

@@ -34,5 +34,6 @@ If unset, the scripts default to branch `main` and remote `origin`.
 - `npm run notes:backup` to push a timestamped `notes/` backup to Google Drive
 
 The local OpenCode entrypoints already call `notes:ensure`, and the VPS deploy workflow calls `notes:sync` before `docker compose up --build`.
+If a machine still has a pre-migration plain `notes/` directory, the bootstrap logic renames it to `notes.pre-git-migration.<timestamp>` before cloning the private repo.
 
 Because `notes/` is its own repo, commit and push notes changes from inside `notes/`, not from the parent repo.

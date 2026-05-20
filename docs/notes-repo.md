@@ -60,7 +60,7 @@ Uploads a timestamped Google Drive backup of `notes/`.
 The machine tried to clone `notes/` but no repo URL was configured.
 
 - `expected .../notes to be a git repo, but it exists without .git`
-The `notes/` directory exists but is not a valid checkout. Repair or replace it before rerunning bootstrap.
+The `notes/` directory exists but is not a valid checkout. If `NOTES_REPO_URL` is set, bootstrap now auto-renames that directory to `notes.pre-git-migration.<timestamp>` and reclones `notes/`. If no repo URL is configured, repair or replace it before rerunning bootstrap.
 
 - `Permission denied (publickey)` on VPS
 The deploy key or SSH host alias is missing or incorrect.
