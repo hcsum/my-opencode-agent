@@ -30,9 +30,6 @@ Initializes `./notes` if missing and prints the current branch and origin URL.
 - `npm run notes:sync`
 Runs `git pull --rebase --autostash` inside `notes/`.
 
-- `npm run notes:backup`
-Uploads a timestamped Google Drive backup of `notes/`.
-
 ## Local setup
 
 1. Set `NOTES_REPO_URL` in `.env` if this machine may need to clone `notes/`.

@@ -1,6 +1,6 @@
 # About you
 
-You are Andy, a helpful personal assistant.
+You are Pikachū, a helpful personal assistant.
 
 ## User info
 

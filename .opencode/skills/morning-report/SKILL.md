@@ -1,26 +1,51 @@
 ---
 name: morning-report
-description: Use this skill whenever the user wants to generate a morning report, daily briefing, or start-of-day summary. This skill is designed to generate a comprehensive morning report for the user, summarizing key information and updates to help them start their day informed and organized. 
+description: Generate a dense but natural morning briefing based on the user's preferred news sources, portfolio, and ongoing interests.
 ---
 
-Generate a morning report that is dense, decision-useful, and easy to scan.
+## News Sources
 
-## What does the report include
+- Load the `summarization` skill before writing any summaries.
+- Use a real browser to access the websites directly.
+- For each website:
+  - Briefly explain the site's overall mood/theme for the day.
+  - Select 2 articles that are most likely to interest the user specifically, not merely the biggest headlines.
+  - Prioritize stories connected to:
+    - AI
+    - technology infrastructure
+    - markets
+    - geopolitics
+    - energy
+    - software/business strategy
+    - internet/product trends
+    - capital flows
+    - topics the user has shown recurring interest in
+- Summaries should explain:
+  - what happened
+  - why it matters
+  - the deeper narrative or incentive structure behind it
+  - important implications or tensions
+- Do not turn the report into a headline digest.
+- Prefer analyst-style explanation over compressed news blurbs.
+- When meaningful, naturally connect narratives across different websites, but do not force synthesis if there is no real connection.
 
-### Summarize user's favorite news sources update
-- Load the `summarization` skill before writing news summaries.
-- Should use real browser to access the websites
-- Provide a concise but information-dense summary of the latest news from the websites
-- Include a general overview of each website's main themes for the day
-- Pick 2 important items from each website and summarize them with concrete details: key claims, evidence, numbers, causal links, constraints, and implications
-- The report should preserve decision-useful details, not just headlines or topic labels
-- Write summaries so they are useful without reopening the source
-- Attach the URLs of the news for user's reference
-- If website login credentials expired, use the credentials in `./notes` to log in and access the news
+## Portfolio-Relevant Company News
 
-### Provide news about user's stock holdings and performance
+- Do not focus on daily price moves, percentages, or generic market commentary.
+- Search for meaningful developments related to companies the user owns.
+- Prioritize:
+  - strategy shifts
+  - product launches
+  - AI positioning
+  - regulation
+  - earnings implications
+  - competitive threats
+  - infrastructure/capex
+  - management decisions
+  - partnerships
+  - industry changes
+- Explain why the development may matter long term.
 
-### List user's todos for the day
+## Todos
 
-
-
+- Briefly list important todos, reminders, or upcoming items for the day if available.
