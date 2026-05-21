@@ -13,8 +13,18 @@ fi
 NOTES_REPO_URL="${NOTES_REPO_URL:-}"
 NOTES_REPO_BRANCH="${NOTES_REPO_BRANCH:-main}"
 NOTES_REPO_REMOTE="${NOTES_REPO_REMOTE:-origin}"
+HAS_GIT=0
+
+if command -v git >/dev/null 2>&1; then
+  HAS_GIT=1
+fi
 
 if [[ -d "$NOTES_DIR/.git" ]]; then
+  if [[ "$HAS_GIT" -eq 0 ]]; then
+    echo "[notes] git is unavailable; using existing checkout at $NOTES_DIR"
+    exit 0
+  fi
+
   git -C "$NOTES_DIR" rev-parse --is-inside-work-tree >/dev/null
   if [[ -n "$NOTES_REPO_URL" ]]; then
     if git -C "$NOTES_DIR" remote get-url "$NOTES_REPO_REMOTE" >/dev/null 2>&1; then
@@ -24,6 +34,16 @@ if [[ -d "$NOTES_DIR/.git" ]]; then
     fi
   fi
   exit 0
+fi
+
+if [[ "$HAS_GIT" -eq 0 ]]; then
+  if [[ -d "$NOTES_DIR" ]]; then
+    echo "[notes] git is unavailable; using existing directory at $NOTES_DIR"
+    exit 0
+  fi
+
+  echo "[notes] git is required to clone notes into $NOTES_DIR" >&2
+  exit 1
 fi
 
 if [[ -e "$NOTES_DIR" ]]; then
