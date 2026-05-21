@@ -223,7 +223,6 @@ export class GmailBridge {
     });
 
     const textBody = stripQuotedReply(body).trim() || subject;
-    const content = `[Email from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${textBody}`;
 
     const pendingPermission = getPendingPermission(threadId);
     if (pendingPermission) {
@@ -283,7 +282,6 @@ export class GmailBridge {
                 subject,
                 rfcMessageId,
                 textBody,
-                content,
                 timestamp: new Date(
                   parseInt(message.internalDate || String(Date.now()), 10),
                 ),

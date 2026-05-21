@@ -34,7 +34,6 @@ export interface GmailRunRequest {
   subject: string;
   rfcMessageId: string;
   textBody: string;
-  content: string;
   timestamp: Date;
   sessionKey: string;
   sessionTitle: string;
@@ -162,11 +161,11 @@ export class OpencodeRuntime {
     this.ensureBackgroundLoops();
 
     try {
-      await this.ensureSuccess(
+        await this.ensureSuccess(
         this.client.session.promptAsync({
           sessionID: sessionId,
           ...(this.config.opencodeModel ? { model: this.config.opencodeModel } : {}),
-          parts: [{ type: "text", text: request.content }],
+          parts: [{ type: "text", text: request.textBody }],
         }),
       );
     } catch (error) {
