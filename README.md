@@ -29,9 +29,11 @@ VPS should use the SSH host alias you configured for the deploy key, for example
 If unset, the scripts default to branch `main` and remote `origin`.
 
 - `npm run notes:bootstrap` to initialize `notes/` in a standard way
+- `npm run notes:push -- "message"` to sync, commit, and push notes changes from the host
 - `npm run notes:sync` to pull the latest notes changes with `--rebase --autostash`
 
 The local OpenCode entrypoints call the internal bootstrap check automatically, and the VPS deploy workflow calls `notes:sync` before `docker compose up --build`.
 If a machine still has a pre-migration plain `notes/` directory, the bootstrap logic renames it to `notes.pre-git-migration.<timestamp>` before cloning the private repo.
+Use `notes:push` only on machines that have write access to the private notes repo.
 
 Because `notes/` is its own repo, commit and push notes changes from inside `notes/`, not from the parent repo.

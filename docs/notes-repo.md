@@ -30,6 +30,9 @@ Initializes `./notes` if missing and prints the current branch and origin URL.
 - `npm run notes:sync`
 Runs `git pull --rebase --autostash` inside `notes/`.
 
+- `npm run notes:push -- "message"`
+Runs sync first, then stages all `notes/` changes, creates a commit, and pushes it to the current branch.
+
 ## Local setup
 
 1. Set `NOTES_REPO_URL` in `.env` if this machine may need to clone `notes/`.
@@ -48,7 +51,7 @@ Runs `git pull --rebase --autostash` inside `notes/`.
 
 1. Before editing shared notes on a machine, run `npm run notes:sync` if you are not sure it is current.
 2. Edit files under `notes/`.
-3. Commit and push from inside `notes/`.
+3. On a machine with write access, run `npm run notes:push -- "message"` or commit and push manually from inside `notes/`.
 4. If another machine also writes to notes, sync there before editing.
 
 ## Failure cases
@@ -61,3 +64,6 @@ The `notes/` directory exists but is not a valid checkout. If `NOTES_REPO_URL` i
 
 - `Permission denied (publickey)` on VPS
 The deploy key or SSH host alias is missing or incorrect.
+
+- `commit message is required`
+`notes:push` is intentionally explicit and will not create automatic commit messages.
