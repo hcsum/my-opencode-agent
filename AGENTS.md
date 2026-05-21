@@ -39,6 +39,7 @@ Conditional offers ("如果你要，我可以…" / "if you want, I can…") are
 - Default to wiki lookup for clearly knowledge-base-oriented questions even when the user does not explicitly say `query wiki`; keep `query wiki <question>` as a force-use-wiki override.
 - `notes/knowledge/raw/` is the immutable source layer, `notes/knowledge/wiki/` is the LLM-maintained wiki, and `notes/knowledge/schema/` defines the workflow.
 - Never modify `notes/user.md` unless the user explicitly asks you to.
+- `notes/` is a separate private Git repo. When notes need to be synced, use `npm run notes:sync`. When notes changes should be committed and pushed on a machine with write access, prefer `npm run notes:push -- "message"` instead of ad hoc Git commands.
 - Only modify `AGENTS.md` when the user wants to change durable agent behavior.
 
 ## Skill Authoring
