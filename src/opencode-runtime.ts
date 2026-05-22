@@ -20,7 +20,11 @@ import {
 } from "./db.js";
 import type { AppConfig, QuestionPrompt, ThreadRunStatus } from "./types.js";
 
-const RUN_TIMEOUT_MS = 8 * 60 * 1000;
+// Heartbeat-based timeout: a run is killed only if the model stops producing
+// progress (no new assistant message or message part) for IDLE_TIMEOUT_MS.
+// HARD_TIMEOUT_MS is an absolute ceiling for runs that keep heartbeating forever.
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const HARD_TIMEOUT_MS = 25 * 60 * 1000;
 const POLL_INTERVAL_MS = 3000;
 const STREAM_IDLE_TIMEOUT_MS = 45000;
 
@@ -80,6 +84,14 @@ interface ActiveRun {
   sessionId: string;
   startedAtMs: number;
   updatedAtMs: number;
+  // Bumped whenever the model produces new output (assistant message or part)
+  // or the user unblocks the run via permission/question reply. Drives the
+  // idle timeout — distinct from startedAtMs which is reset on resume to
+  // gate message-filter floors.
+  lastProgressAtMs: number;
+  // True wall-clock origin of the run, never mutated after install. Used for
+  // the hard ceiling so a chatty-but-non-converging run can still be killed.
+  runOriginAtMs: number;
   callbacks: RuntimeCallbacks;
   status: ThreadRunStatus;
   latestAssistantMessageId?: string;
@@ -240,13 +252,21 @@ export class OpencodeRuntime {
     this.updateRunState(run, "running");
   }
 
-  // Reset the timeout baseline when the model resumes work after a human pause.
-  // Without this, time spent waiting on the user counts against RUN_TIMEOUT_MS,
-  // so a long approval forces an immediate fail on the very next poll.
+  // Reset the timeout baselines when the model resumes work after a human pause.
+  // Without this, time spent waiting on the user would count against IDLE_TIMEOUT_MS,
+  // so a long approval would force an immediate fail on the very next poll.
+  // startedAtMs is still reset because findLatestCompletedAssistantMessage uses it
+  // as a message-filter floor — without the reset, a stale terminal assistant message
+  // from before the pause could be re-finalized.
   private resumeRunClock(run: ActiveRun): void {
     const now = Date.now();
     run.startedAtMs = now;
+    run.lastProgressAtMs = now;
     run.meta = { ...run.meta, startedAtMs: now };
+  }
+
+  private markProgress(run: ActiveRun): void {
+    run.lastProgressAtMs = Date.now();
   }
 
   private restoreActiveRun(
@@ -262,12 +282,15 @@ export class OpencodeRuntime {
   }
 
   private installRun(meta: ThreadRunRecord, callbacks: RuntimeCallbacks): ActiveRun {
+    const now = Date.now();
     const run: ActiveRun = {
       threadId: meta.threadId,
       sessionKey: meta.sessionKey,
       sessionId: meta.sessionId,
       startedAtMs: meta.startedAtMs,
       updatedAtMs: meta.updatedAtMs,
+      lastProgressAtMs: now,
+      runOriginAtMs: meta.startedAtMs,
       callbacks,
       status: meta.status,
       finalizing: false,
@@ -377,6 +400,7 @@ export class OpencodeRuntime {
       if (!threadId) return;
       const run = this.activeRuns.get(threadId);
       if (!run) return;
+      this.markProgress(run);
       this.trackAssistant(run, props.info as AssistantMessage);
       await this.maybeFinalizeAssistant(run, props.info as AssistantMessage);
       return;
@@ -386,6 +410,8 @@ export class OpencodeRuntime {
       const props = event.properties as { sessionID: string; part: Part };
       const threadId = this.sessionToThread.get(props.sessionID);
       if (!threadId) return;
+      const run = this.activeRuns.get(threadId);
+      if (run) this.markProgress(run);
       this.logProgressPart(props.part as unknown as ToolPartEvent | TextPartEvent);
       return;
     }
@@ -470,16 +496,25 @@ export class OpencodeRuntime {
       return undefined;
     });
 
+    const now = Date.now();
     for (const run of this.activeRuns.values()) {
-      // Skip timeout while waiting on the user — human approval routinely exceeds RUN_TIMEOUT_MS.
+      // Skip timeout while waiting on the user — human approval routinely exceeds IDLE_TIMEOUT_MS.
       if (run.status === "waiting_permission" || run.status === "waiting_question") {
         continue;
       }
 
-      if (Date.now() - run.startedAtMs > RUN_TIMEOUT_MS) {
+      if (now - run.lastProgressAtMs > IDLE_TIMEOUT_MS) {
         await this.failRun(
           run.threadId,
-          `OpenCode run timed out after ${RUN_TIMEOUT_MS / 60000} minutes`,
+          `OpenCode run idle for over ${IDLE_TIMEOUT_MS / 60000} minutes (no new output from the model)`,
+        );
+        continue;
+      }
+
+      if (now - run.runOriginAtMs > HARD_TIMEOUT_MS) {
+        await this.failRun(
+          run.threadId,
+          `OpenCode run exceeded hard ceiling of ${HARD_TIMEOUT_MS / 60000} minutes`,
         );
         continue;
       }
