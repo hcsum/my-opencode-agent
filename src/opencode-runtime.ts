@@ -172,25 +172,29 @@ export class OpencodeRuntime {
     const run = this.installRun(meta, callbacks);
     this.ensureBackgroundLoops();
 
+    // promptAsync can stay open until the run finishes. Keep it in the
+    // background so one slow Gmail thread does not block unrelated threads.
+    void this.launchPrompt(run, request.textBody);
+
+    return { started: true, status: "running" };
+  }
+
+  private async launchPrompt(run: ActiveRun, text: string): Promise<void> {
     try {
-        await this.ensureSuccess(
+      await this.ensureSuccess(
         this.client.session.promptAsync({
-          sessionID: sessionId,
+          sessionID: run.sessionId,
           ...(this.config.opencodeModel ? { model: this.config.opencodeModel } : {}),
-          parts: [{ type: "text", text: request.textBody }],
+          parts: [{ type: "text", text }],
         }),
       );
     } catch (error) {
-      this.removeRun(request.threadId);
-      updateThreadRunStatus({
-        threadId: request.threadId,
-        status: "failed",
-        lastError: extractErrorMessage(error),
-      });
-      throw error;
+      const active = this.activeRuns.get(run.threadId);
+      if (!active || active.sessionId !== run.sessionId || !isActiveStatus(active.status)) {
+        return;
+      }
+      await this.handleRecoverableRunError(active, error);
     }
-
-    return { started: true, status: "running" };
   }
 
   async resumeRun(threadId: string, callbacks: RuntimeCallbacks): Promise<boolean> {
