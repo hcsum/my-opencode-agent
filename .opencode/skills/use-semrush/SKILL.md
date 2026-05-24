@@ -11,23 +11,22 @@ Then visit: https://sem.3ue.co/home
 
 **IMPORTANT**: Confirm if the website open correctly. If you got redirected to the login page, find credentials from `./notes` and log in manually. After successful login, click "打开" to enter the main dashboard. Only after you can see the dashboard, the skill is ready to use. If you cannot log in successfully, stop and report the issue.
 
-## Export
+## Export via UI (split workflow)
 
-Script entry:
+The user clicks the native 导出/Export button in their browser. The agent opens the right Semrush page and processes the downloaded CSV afterward.
 
-`npx tsx .opencode/skills/use-semrush/scripts/export.ts <site> [options]`
+Steps:
 
-Supported export types:
+1. **Agent**: open the relevant Semrush report URL in the dedicated browser via `web-access` CDP (`/new?url=...`). Pick the URL from the Known URL Formats table.
+2. **User**: applies filters in the UI (e.g. Follow only, Active only), then clicks 导出 → CSV. Semrush saves the file to `~/Downloads/`.
+3. **Agent**: ingest the CSV by running:
+   ```
+   npx tsx .opencode/skills/use-semrush/scripts/process-export.ts [filename-substring]
+   ```
+   The script finds the newest matching CSV in `~/Downloads`, classifies it by filename (`backlinks_refdomains` → refdomains, `-backlinks` → backlinks, `organic.Positions` → keywords), and moves it to `notes/seo/site-backlinks/` or `notes/seo/site-keywords/`. For `-backlinks` exports it then trims the columns to `Page ascore, Source url, Target url, Nofollow, First seen, Last seen` and sorts by `Page ascore` desc in place.
+4. **Agent**: run any further task-specific analysis (cross-site joins, filtering by AS threshold, classifying source-page type, etc.) inline on the ingested file.
 
-- `--type keywords`: export keyword rankings CSV to `notes/keywords/`
-- `--type backlinks`: export backlink detail CSV to `notes/backlinks/`
-- `--type refdomains`: export referring-domain aggregate CSV to `notes/backlinks/`
-
-Examples:
-
-- `npx tsx .opencode/skills/use-semrush/scripts/export.ts character.ai --type keywords --db us --min-volume 1000 --max-kd 40`
-- `npx tsx .opencode/skills/use-semrush/scripts/export.ts <domain> --type backlinks`
-- `npx tsx .opencode/skills/use-semrush/scripts/export.ts <domain> --type refdomains`
+Prefer the Backlinks report (per-link rows with Source URL) over the Referring Domains report (domain-level aggregate, lacks source URLs). If the user exports the wrong report, just have them re-export — the script always picks the newest matching file.
 
 ## Known URL Formats
 
@@ -36,7 +35,6 @@ Examples:
 | Domain overview | `https://sem.3ue.co/analytics/overview/?q={domain}&protocol=https&searchType=domain` |
 | Keyword overview | `https://sem.3ue.co/analytics/keywordoverview/?q={keyword}&db=us` |
 | Backlinks of a domain | `https://sem.3ue.co/analytics/backlinks/backlinks/?q={domain}&searchType=domain` |
-| Referring Domains of a domain | `https://sem.3ue.co/analytics/refdomains/report/?q={domain}&searchType=domain` |
 | Keyword Rankings of a domain | `https://sem.3ue.co/analytics/organic/positions/?q={domain}&searchType=domain` |
 | Relevant keyword list for a given keyword | `https://sem.3ue.co/analytics/keywordmagic/?q={keyword}&db=us` |
 
