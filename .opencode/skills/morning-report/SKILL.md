@@ -3,6 +3,10 @@ name: morning-report
 description: Generate a dense but natural morning briefing based on the user's preferred news sources, portfolio, and ongoing interests.
 ---
 
+## Scheduling
+
+This report is a natural fit for the scheduler. If the user asks to receive it on a cadence (e.g. "every weekday morning at 8am"), use `schedule_create` with `kind='cron'` and a `prompt` like `"produce the morning report"` so a fresh run fires on schedule.
+
 ## News Sources
 
 - Load the `summarization` skill before writing any summaries.

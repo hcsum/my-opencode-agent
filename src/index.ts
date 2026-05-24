@@ -7,6 +7,7 @@ import { SerialQueue } from "./queue.js";
 import { GmailBridge } from "./gmail.js";
 import { initDatabase } from "./db.js";
 import { getRuntimeLogPath, setupFileLogging } from "./logger.js";
+import { launchScheduler, type Scheduler } from "./scheduler/index.js";
 
 const BRIDGE_PROCESS_MARKERS = ["src/index.ts", "dist/index.js"];
 
@@ -22,12 +23,19 @@ async function main(): Promise<void> {
   await opencode.healthcheck();
 
   const launches: Promise<void>[] = [];
+  let scheduler: Scheduler | undefined;
 
   if (config.gmailTo) {
+    const bridge = new GmailBridge(config, opencode, queue);
     launches.push(
-      new GmailBridge(config, opencode, queue)
-        .launch()
-        .catch((err) => console.error("[gmail] failed to start", err)),
+      bridge.launch().catch((err) => console.error("[gmail] failed to start", err)),
+    );
+    launches.push(
+      launchScheduler({ config, opencode, queue, bridge })
+        .then((s) => {
+          scheduler = s;
+        })
+        .catch((err) => console.error("[scheduler] failed to start", err)),
     );
   }
 
@@ -40,6 +48,7 @@ async function main(): Promise<void> {
 
   const shutdown = () => {
     releaseLock();
+    void scheduler?.stop();
   };
 
   process.once("exit", shutdown);

@@ -58,6 +58,13 @@ export function initDatabase(): void {
   runMigrations();
 }
 
+export function getDatabase(): BetterSqlite3.Database {
+  if (!db) {
+    throw new Error("Database not initialized; call initDatabase() first");
+  }
+  return db;
+}
+
 export function isProcessed(gmailMessageId: string): boolean {
   const row = db
     .prepare("SELECT 1 FROM processed_messages WHERE gmail_message_id = ?")
@@ -558,6 +565,23 @@ function createSchema(): void {
       thread_id TEXT PRIMARY KEY,
       failure_count INTEGER NOT NULL DEFAULT 0,
       last_failed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK(kind IN ('cron','once')),
+      cron_expr TEXT,
+      run_at TEXT,
+      timezone TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      next_run_at TEXT,
+      last_run_at TEXT,
+      run_count INTEGER NOT NULL DEFAULT 0,
+      last_status TEXT NOT NULL DEFAULT 'idle' CHECK(last_status IN ('idle','running','success','error')),
+      last_error TEXT
     )
   `);
 }

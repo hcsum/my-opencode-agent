@@ -21,6 +21,25 @@ Conditional offers ("如果你要，我可以…" / "if you want, I can…") are
 
 - Avoid ending a completed task with a default offer such as "如果你要，我可以...". Finish with the result unless the next step requires a user decision.
 
+## Scheduling
+
+The Gmail bridge runs a scheduler that fires tasks on cron or one-off cadences and emails the result to the user as a fresh email per fire. You have direct tool access to it:
+
+- `schedule_create({ kind, cron?, runAt?, timezone?, prompt, summary })` — `kind` is `'cron'` for recurring or `'once'` for one-off. For `cron` provide a POSIX 5-field expression (e.g. `0 8 * * 1-5` = weekdays at 08:00). For `once` provide an ISO 8601 `runAt` with timezone offset. `timezone` is an IANA zone (e.g. `America/Los_Angeles`); defaults to `USER_TIMEZONE`. `prompt` is the instruction the scheduler will hand back to you at fire time — write it as if the user is asking it. `summary` is a short subject-line label.
+- `schedule_list()` — list every scheduled task with id, schedule, status, next run.
+- `schedule_delete({ id })`, `schedule_pause({ id })`, `schedule_resume({ id })`.
+- `schedule_run_now({ id })` — fire a task immediately, ignoring its cadence. Useful when the user says "give me the morning report now" for an already-scheduled job.
+
+When to use:
+- Treat any user request mentioning a recurring cadence ("every day", "weekdays", "every Monday morning") or a future time ("tomorrow noon", "in 2 hours", "this Friday 5pm") as a scheduling intent and reach for these tools by default.
+- Convert natural language into the tool's structured arguments yourself — do not ask the user for cron syntax. Resolve "8am" / "明天" / "下周一" against today's date and the user's timezone.
+- If the user asks "what's scheduled?" or "remind me what tasks I have", call `schedule_list` rather than guessing from memory.
+- After creating or modifying a task, briefly confirm with the next run time in the user's timezone so they can sanity-check.
+
+When NOT to use:
+- One-shot requests with no future component ("write me a summary now") — just do them inline.
+- Reminders the user phrases as conversational ("remind me later to think about X") with no concrete time — ask for a time instead of guessing.
+
 ## Web Access
 
 - When need to visit a sub page of a website, NEVER guess the URL, always get the URL from the page, or click the page element

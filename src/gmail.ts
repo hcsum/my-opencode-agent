@@ -30,6 +30,7 @@ import type {
   RuntimeCallbacks,
 } from "./opencode-runtime.js";
 import { SerialQueue } from "./queue.js";
+import type { ScheduledResultPayload } from "./scheduler/types.js";
 import type { AppConfig } from "./types.js";
 import { WorkflowRunner } from "./workflow.js";
 
@@ -449,6 +450,11 @@ export class GmailBridge {
 
   private async resumeActiveRuns(): Promise<void> {
     for (const run of listActiveThreadRuns()) {
+      // Scheduled runs live in their own namespace and own recovery loop —
+      // do not try to thread-reply from here. Scheduler boot marks orphaned
+      // runs as errored and reports via fresh email.
+      if (run.threadId.startsWith("scheduled-task:")) continue;
+
       this.threadMeta.set(run.threadId, {
         senderEmail: run.senderEmail,
         senderName: run.senderName,
@@ -460,6 +466,36 @@ export class GmailBridge {
         this.buildRuntimeCallbacks(run.threadId),
       );
     }
+  }
+
+  async sendScheduledResult(payload: ScheduledResultPayload): Promise<void> {
+    if (!this.gmail) return;
+    if (!this.config.gmailTo) {
+      console.warn("[gmail] no gmailTo configured; cannot deliver scheduled result");
+      return;
+    }
+
+    const prefix = payload.isError ? "[Scheduled] FAILED " : "[Scheduled] ";
+    const subject = `${prefix}${payload.summary} — ${payload.fireTime}`;
+
+    const raw = [
+      `To: ${this.config.gmailTo}`,
+      `From: ${this.config.gmailTo}`,
+      `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      payload.body,
+      "",
+      "—",
+      `Task: ${payload.summary}  ·  id: ${payload.taskId}`,
+    ].join("\r\n");
+
+    const encoded = Buffer.from(raw).toString("base64url");
+
+    await this.gmail.users.messages.send({
+      userId: "me",
+      requestBody: { raw: encoded },
+    });
   }
 
   private buildRuntimeCallbacks(threadId: string): RuntimeCallbacks {

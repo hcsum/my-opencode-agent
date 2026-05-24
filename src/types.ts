@@ -7,6 +7,10 @@ export interface AppConfig {
   gmailPollIntervalMs: number;
   gmailNewerThan: string;
   opencodeModel?: { providerID: string; modelID: string };
+  userTimezone: string;
+  schedulerApiPort: number;
+  schedulerMaxTasks: number;
+  schedulerMinIntervalMinutes: number;
 }
 
 export type WorkflowJobKind = "ingest" | "query" | "lint";

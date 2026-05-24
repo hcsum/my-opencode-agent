@@ -1,0 +1,223 @@
+import { computeNextCronRunAt, computeNextRunAt, isTaskDue } from "./cron.js";
+import { ScheduledTaskExecutor } from "./executor.js";
+import {
+  deleteTask,
+  getTask,
+  listEnabledTasks,
+  markError,
+  markRunning,
+  markSuccess,
+  reapInterruptedRuns,
+  setNextRunAt,
+} from "./store.js";
+import type { ScheduledTask } from "./types.js";
+import type { GmailBridge } from "../gmail.js";
+
+// setTimeout silently clamps delays > ~24.8 days. When a task is that far out
+// we schedule a stub timer that re-resolves the next fire when it expires.
+const MAX_SAFE_TIMEOUT_MS = 2_147_483_000; // ~24.8 days
+const RESCHEDULE_CHECK_FLOOR_MS = 1000;
+
+export interface RuntimeDeps {
+  executor: ScheduledTaskExecutor;
+  bridge: GmailBridge;
+}
+
+export class SchedulerRuntime {
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly runningTaskIds = new Set<string>();
+  private started = false;
+
+  constructor(private readonly deps: RuntimeDeps) {}
+
+  start(): void {
+    if (this.started) return;
+    this.started = true;
+
+    reapInterruptedRuns();
+
+    let scheduled = 0;
+    for (const task of listEnabledTasks()) {
+      this.refreshTimerFor(task.id);
+      scheduled++;
+    }
+    console.log(`[scheduler] recovered ${scheduled} task(s)`);
+  }
+
+  async stop(): Promise<void> {
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    this.timers.clear();
+  }
+
+  // Cancel any existing timer for the task and re-register based on its
+  // current state. Called from the API layer after create/update/resume.
+  refreshTimerFor(taskId: string): void {
+    const existing = this.timers.get(taskId);
+    if (existing) {
+      clearTimeout(existing);
+      this.timers.delete(taskId);
+    }
+
+    const task = getTask(taskId);
+    if (!task || !task.enabled) return;
+
+    let nextRunAt = task.nextRunAt;
+    if (!nextRunAt) {
+      nextRunAt = computeNextRunAt(task);
+      if (!nextRunAt) {
+        // Once task whose runAt is already in the past — discard.
+        deleteTask(taskId);
+        return;
+      }
+      setNextRunAt(taskId, nextRunAt);
+    }
+
+    this.scheduleTimer(taskId, nextRunAt);
+  }
+
+  // Fire a task immediately, ignoring its scheduled cadence. Returns false if
+  // the task is already running (per-task overlap protection).
+  fireNow(taskId: string): boolean {
+    const task = getTask(taskId);
+    if (!task) return false;
+    if (this.runningTaskIds.has(taskId)) return false;
+    void this.runTaskNow(task);
+    return true;
+  }
+
+  private scheduleTimer(taskId: string, nextRunAt: string): void {
+    const delayMs = Math.max(
+      RESCHEDULE_CHECK_FLOOR_MS,
+      Date.parse(nextRunAt) - Date.now(),
+    );
+
+    if (delayMs > MAX_SAFE_TIMEOUT_MS) {
+      const stub = setTimeout(() => {
+        this.timers.delete(taskId);
+        this.refreshTimerFor(taskId);
+      }, MAX_SAFE_TIMEOUT_MS);
+      this.timers.set(taskId, stub);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.timers.delete(taskId);
+      this.handleFire(taskId);
+    }, delayMs);
+    this.timers.set(taskId, timer);
+  }
+
+  private handleFire(taskId: string): void {
+    const task = getTask(taskId);
+    if (!task) return;
+    if (!task.enabled) return;
+
+    // Defensive: don't fire if drift means we're not actually due yet.
+    if (task.nextRunAt && !isTaskDue(task)) {
+      this.scheduleTimer(taskId, task.nextRunAt);
+      return;
+    }
+
+    if (this.runningTaskIds.has(taskId)) {
+      // Previous run still in flight; skip this fire and let completion
+      // reschedule. Matches telegram-bot's no-stack-of-same-task policy.
+      console.warn(
+        `[scheduler] skipping fire of ${taskId} — previous run still active`,
+      );
+      this.scheduleNextAfterRun(task);
+      return;
+    }
+
+    void this.runTaskNow(task);
+  }
+
+  private async runTaskNow(task: ScheduledTask): Promise<void> {
+    const fireTime = new Date().toISOString();
+    this.runningTaskIds.add(task.id);
+    markRunning(task.id, fireTime);
+
+    try {
+      await this.deps.executor.dispatch(task, fireTime, {
+        onSuccess: (text) => this.handleCompletion(task, fireTime, text, null),
+        onFailure: (err) => this.handleCompletion(task, fireTime, "", err),
+      });
+    } catch (error) {
+      // Failure to even dispatch — surface and reschedule.
+      const message = error instanceof Error ? error.message : String(error);
+      this.handleCompletion(task, fireTime, "", message);
+    }
+  }
+
+  private handleCompletion(
+    task: ScheduledTask,
+    fireTime: string,
+    text: string,
+    error: string | null,
+  ): void {
+    this.runningTaskIds.delete(task.id);
+
+    if (error) {
+      // Compute next run BEFORE marking, so cron tasks keep their cadence
+      // even when individual fires fail.
+      const next = this.computeNextOrNull(task);
+      markError(task.id, error, next);
+      void this.deps.bridge.sendScheduledResult({
+        taskId: task.id,
+        summary: task.summary,
+        fireTime,
+        body: error,
+        isError: true,
+      });
+
+      if (task.kind === "once") {
+        // One-off failed; drop it so the user doesn't get retried at next boot.
+        deleteTask(task.id);
+        return;
+      }
+
+      if (next) this.scheduleTimer(task.id, next);
+      return;
+    }
+
+    if (task.kind === "once") {
+      markSuccess(task.id, null);
+      void this.deps.bridge.sendScheduledResult({
+        taskId: task.id,
+        summary: task.summary,
+        fireTime,
+        body: text,
+        isError: false,
+      });
+      deleteTask(task.id);
+      return;
+    }
+
+    const next = this.computeNextOrNull(task);
+    markSuccess(task.id, next);
+    void this.deps.bridge.sendScheduledResult({
+      taskId: task.id,
+      summary: task.summary,
+      fireTime,
+      body: text,
+      isError: false,
+    });
+    if (next) this.scheduleTimer(task.id, next);
+  }
+
+  private scheduleNextAfterRun(task: ScheduledTask): void {
+    if (task.kind === "once") return;
+    const next = computeNextCronRunAt(task.cronExpr, task.timezone);
+    setNextRunAt(task.id, next);
+    this.scheduleTimer(task.id, next);
+  }
+
+  private computeNextOrNull(task: ScheduledTask): string | null {
+    if (task.kind === "once") return null;
+    try {
+      return computeNextCronRunAt(task.cronExpr, task.timezone);
+    } catch (error) {
+      console.error(`[scheduler] failed to compute next run for ${task.id}`, error);
+      return null;
+    }
+  }
+}
