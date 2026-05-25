@@ -45,21 +45,32 @@ export class SchedulerRuntime {
   }
 
   async stop(): Promise<void> {
-    for (const timer of this.timers.values()) clearTimeout(timer);
-    this.timers.clear();
+    for (const taskId of this.timers.keys()) this.clearTimer(taskId);
   }
 
   // Cancel any existing timer for the task and re-register based on its
   // current state. Called from the API layer after create/update/resume.
   refreshTimerFor(taskId: string): void {
-    const existing = this.timers.get(taskId);
-    if (existing) {
-      clearTimeout(existing);
-      this.timers.delete(taskId);
-    }
+    this.clearTimer(taskId);
 
     const task = getTask(taskId);
     if (!task || !task.enabled) return;
+
+    if (task.kind === "once") {
+      const nextRunAt = computeNextRunAt(task);
+      if (!nextRunAt) {
+        // One-off tasks are not replayed after their original wall-clock time.
+        deleteTask(taskId);
+        return;
+      }
+
+      if (task.nextRunAt !== nextRunAt) {
+        setNextRunAt(taskId, nextRunAt);
+      }
+
+      this.scheduleTimer(taskId, nextRunAt);
+      return;
+    }
 
     let nextRunAt = task.nextRunAt;
     if (!nextRunAt) {
@@ -81,8 +92,16 @@ export class SchedulerRuntime {
     const task = getTask(taskId);
     if (!task) return false;
     if (this.runningTaskIds.has(taskId)) return false;
+    this.clearTimer(taskId);
     void this.runTaskNow(task);
     return true;
+  }
+
+  private clearTimer(taskId: string): void {
+    const existing = this.timers.get(taskId);
+    if (!existing) return;
+    clearTimeout(existing);
+    this.timers.delete(taskId);
   }
 
   private scheduleTimer(taskId: string, nextRunAt: string): void {
@@ -161,7 +180,7 @@ export class SchedulerRuntime {
       // even when individual fires fail.
       const next = this.computeNextOrNull(task);
       markError(task.id, error, next);
-      void this.deps.bridge.sendScheduledResult({
+      this.sendScheduledResult({
         taskId: task.id,
         summary: task.summary,
         fireTime,
@@ -181,7 +200,7 @@ export class SchedulerRuntime {
 
     if (task.kind === "once") {
       markSuccess(task.id, null);
-      void this.deps.bridge.sendScheduledResult({
+      this.sendScheduledResult({
         taskId: task.id,
         summary: task.summary,
         fireTime,
@@ -194,7 +213,7 @@ export class SchedulerRuntime {
 
     const next = this.computeNextOrNull(task);
     markSuccess(task.id, next);
-    void this.deps.bridge.sendScheduledResult({
+    this.sendScheduledResult({
       taskId: task.id,
       summary: task.summary,
       fireTime,
@@ -219,5 +238,20 @@ export class SchedulerRuntime {
       console.error(`[scheduler] failed to compute next run for ${task.id}`, error);
       return null;
     }
+  }
+
+  private sendScheduledResult(payload: {
+    taskId: string;
+    summary: string;
+    fireTime: string;
+    body: string;
+    isError: boolean;
+  }): void {
+    void this.deps.bridge.sendScheduledResult(payload).catch((error) => {
+      console.error(
+        `[scheduler] failed to deliver scheduled result for ${payload.taskId}`,
+        error,
+      );
+    });
   }
 }

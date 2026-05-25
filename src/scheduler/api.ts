@@ -151,7 +151,7 @@ export class SchedulerApi {
       });
     } else {
       const runAt = requireString(body, "runAt");
-      const runAtMs = Date.parse(runAt);
+      const runAtMs = parseRunAtWithTimezoneOffset(runAt);
       if (Number.isNaN(runAtMs)) throw new Error(`runAt is not a valid ISO timestamp: ${runAt}`);
       if (runAtMs <= Date.now()) throw new Error(`runAt must be in the future: ${runAt}`);
       nextRunAt = new Date(runAtMs).toISOString();
@@ -257,4 +257,13 @@ async function readJson(req: http.IncomingMessage): Promise<Record<string, unkno
       error instanceof Error ? `invalid JSON body: ${error.message}` : "invalid JSON body",
     );
   }
+}
+
+function parseRunAtWithTimezoneOffset(runAt: string): number {
+  if (!/(Z|[+-]\d{2}:\d{2})$/i.test(runAt)) {
+    throw new Error(
+      `runAt must include a timezone offset or Z suffix: ${runAt}`,
+    );
+  }
+  return Date.parse(runAt);
 }
