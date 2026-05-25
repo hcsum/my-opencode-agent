@@ -118,9 +118,18 @@ async function ensureProxy(config) {
   };
 }
 
+function parseCliFlags(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === '--browser' && argv[i + 1]) out.BROWSER_MODE = argv[++i];
+    else if (argv[i] === '--browser-id' && argv[i + 1]) out.BROWSER_ID = argv[++i];
+  }
+  return out;
+}
+
 async function main() {
   const node = checkNode();
-  const config = loadRuntimeConfig(process.env);
+  const config = loadRuntimeConfig({ ...process.env, ...parseCliFlags(process.argv.slice(2)) });
   const runtime = await resolveRuntimeAvailability(config);
 
   if (!runtime.ok) {

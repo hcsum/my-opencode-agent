@@ -174,6 +174,22 @@ node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
 
 脚本会检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。所有检查结果都在 JSON 字段里返回。
 
+### 何时主动切到主力浏览器
+
+默认走 dedicated 即可。但任务需要**主力浏览器里特有的登录态/会话**时，必须显式 `--browser primary`，否则自动选模式会选到 dedicated，看不到目标内容。典型触发：
+
+- 用户已在主力浏览器打开了目标页面（如 Ahrefs / Semrush / GSC dashboard / 内部公司系统），且让你读取那里的数据
+- 任务依赖主力浏览器里登录的付费 SaaS（dedicated profile 没登录）
+- 用户明确说 "用主力浏览器" / "use my main browser"
+
+切换是 proxy 全局状态切换：调 `--browser primary` 会 shutdown 当前 proxy 再起一个连主力。代价：
+
+- 之前 dedicated 上拿到的 targetId 全部失效，需要重新拿 tab
+- 浏览器本身的登录态/cookie 不动
+- Proxy 同一时刻只能指向一个浏览器，不能并行
+
+任务做完如需回到 dedicated，再次显式 `--browser dedicated`。
+
 ### Proxy API
 
 所有操作通过 curl 调用 HTTP API：
