@@ -1,7 +1,7 @@
 # My Opencode Agent
 
-This repo mainly contains 2 parts: 
-- a `.opencode` folder containing the agent skills that I wrote or curated from else where
+This repo mainly contains 2 parts:
+- a shared skill tree under `.opencode/skills` that is exposed to Codex via `.codex/skills` and to Claude via `.claude/skills`
 - an Opencode runtime with a Gmail bridge 
 
 ## How I use this agent
@@ -15,6 +15,15 @@ I use this project in 2 ways:
 
 - Web research through the web-access skill, can connect to a local browser if on my computer, or use BrowserBase remote browser if running on the VPS
 - LLM Wiki for accumulating and consolidating knowledge overtime
+
+## Skills layout
+
+The canonical skill source in this repo is `.opencode/skills`.
+
+- Codex discovers repo-local skills through `.codex/skills`
+- Claude discovers the same skills through `.claude/skills`
+
+Both paths are symlinks to `.opencode/skills`, so new skills should always be added under `.opencode/skills/<skill-name>/SKILL.md`.
 
 ## Notes repo
 
