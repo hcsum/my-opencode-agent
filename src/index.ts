@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const launches: Promise<void>[] = [];
   let scheduler: Scheduler | undefined;
 
-  if (config.gmailTo) {
+  if (config.agentInboxEmail) {
     const bridge = new GmailBridge(config, opencode, queue);
     launches.push(
       bridge.launch().catch((err) => console.error("[gmail] failed to start", err)),

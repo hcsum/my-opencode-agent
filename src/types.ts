@@ -3,7 +3,10 @@ export interface AppConfig {
   opencodeServerUsername?: string;
   opencodeServerPassword?: string;
   stateFile: string;
+  agentInboxEmail?: string;
+  userEmail?: string;
   gmailTo?: string;
+  scheduledResultsTo?: string;
   gmailPollIntervalMs: number;
   gmailNewerThan: string;
   opencodeModel?: { providerID: string; modelID: string };

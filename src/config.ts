@@ -36,7 +36,17 @@ export function loadConfig(): AppConfig {
       process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
     stateFile:
       process.env.STATE_FILE?.trim() || path.join(".data", "state.json"),
+    agentInboxEmail:
+      process.env.AGENT_INBOX_EMAIL?.trim() ||
+      process.env.GMAIL_TO?.trim() ||
+      undefined,
+    userEmail:
+      process.env.USER_EMAIL?.trim() ||
+      process.env.SCHEDULED_RESULTS_TO?.trim() ||
+      undefined,
     gmailTo: process.env.GMAIL_TO?.trim() || undefined,
+    scheduledResultsTo:
+      process.env.SCHEDULED_RESULTS_TO?.trim() || undefined,
     gmailPollIntervalMs: Number(process.env.GMAIL_POLL_INTERVAL_MS) || 10000,
     gmailNewerThan: process.env.GMAIL_NEWER_THAN?.trim() || "3d",
     opencodeModel: parseModel(process.env.OPENCODE_MODEL),

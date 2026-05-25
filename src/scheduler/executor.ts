@@ -38,7 +38,11 @@ export class ScheduledTaskExecutor {
     task: ScheduledTask,
     fireTime: string,
   ): GmailRunRequest {
-    const senderEmail = this.deps.config.gmailTo || "scheduler@localhost";
+    const senderEmail =
+      this.deps.config.userEmail ||
+      this.deps.config.agentInboxEmail ||
+      this.deps.config.gmailTo ||
+      "scheduler@localhost";
     return {
       threadId: `scheduled-task:${task.id}:${fireTime}`,
       messageId: `scheduled-task:${task.id}:${fireTime}`,
