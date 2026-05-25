@@ -166,7 +166,6 @@ export class GmailBridge {
       `to:${inbox}`,
       `newer_than:${this.config.gmailNewerThan}`,
     ];
-    filters.push(`-from:${inbox}`);
     const query = filters.join(" ");
     console.log(`[gmail] polling: ${query}`);
     const res = await this.gmail.users.messages.list({
@@ -229,13 +228,6 @@ export class GmailBridge {
 
     if (!this.isAuthorizedSender(senderEmail)) {
       console.log(`[gmail] skipping unauthorized sender ${senderEmail} for ${messageId}`);
-      await this.markRead(messageId);
-      markProcessed(messageId, threadId, subject, senderEmail);
-      return;
-    }
-
-    if (this.isSelfScheduledMessage(senderEmail, subject)) {
-      console.log(`[gmail] skipping self-sent scheduled message ${messageId}`);
       await this.markRead(messageId);
       markProcessed(messageId, threadId, subject, senderEmail);
       return;
@@ -543,18 +535,6 @@ export class GmailBridge {
     const normalizedUser = this.getUserAddress()?.trim().toLowerCase();
     if (!normalizedUser) return true;
     return normalizedSender === normalizedUser;
-  }
-
-  private isSelfScheduledMessage(senderEmail: string, subject: string): boolean {
-    if (!subject.startsWith("[Scheduled]")) return false;
-    const normalizedSender = senderEmail.trim().toLowerCase();
-    const normalizedPollAddress = this.getAgentInboxAddress()?.trim().toLowerCase();
-    const normalizedUserEmail = this.userEmail.trim().toLowerCase();
-
-    return (
-      (!!normalizedPollAddress && normalizedSender === normalizedPollAddress) ||
-      (!!normalizedUserEmail && normalizedSender === normalizedUserEmail)
-    );
   }
 
   private buildRuntimeCallbacks(threadId: string): RuntimeCallbacks {
