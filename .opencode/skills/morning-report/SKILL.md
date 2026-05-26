@@ -14,6 +14,7 @@ This report is a natural fit for the scheduler. If the user asks to receive it o
 - For each website:
   - Briefly explain the site's overall mood/theme for the day.
   - Select 2 articles that are most likely to interest the user specifically, not merely the biggest headlines.
+  - For each selected article, capture the exact article title and the final article URL from the page or page interaction. Do not guess URLs.
   - Prioritize stories connected to:
     - technology
     - markets
@@ -29,6 +30,17 @@ This report is a natural fit for the scheduler. If the user asks to receive it o
 - Do not turn the report into a headline digest.
 - Prefer analyst-style explanation over compressed news blurbs.
 - When meaningful, naturally connect narratives across different websites, but do not force synthesis if there is no real connection.
+- Treat article links as required output, not an optional extra.
+- If you cannot recover a stable article URL for a candidate piece, skip that piece and pick another article you can title and link correctly.
+
+## Output
+
+- Under each website section, list the 2 selected articles with:
+  - the exact article title
+  - one standalone line containing the article URL
+  - the analytical summary below that title/link pair
+- Do not batch multiple article links onto one line.
+- Do not invent, reconstruct, or hand-edit article URLs.
 
 ## Portfolio-Relevant Company News
 

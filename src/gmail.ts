@@ -497,18 +497,22 @@ export class GmailBridge {
     const subject = `${prefix}${payload.summary} — ${payload.fireTime}`;
     const fromAddress =
       this.userEmail || this.getAgentInboxAddress() || recipient;
-
-    const raw = [
-      `To: ${recipient}`,
-      `From: ${fromAddress}`,
-      `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
-      "Content-Type: text/plain; charset=utf-8",
-      "",
+    const body = [
       payload.body,
       "",
       "—",
       `Task: ${payload.summary}  ·  id: ${payload.taskId}`,
-    ].join("\r\n");
+    ].join("\n");
+
+    const raw = buildMultipartAlternativeMessage({
+      headers: [
+        `To: ${recipient}`,
+        `From: ${fromAddress}`,
+        `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
+      ],
+      textBody: body,
+      htmlBody: markdownToHtml(body),
+    });
 
     const encoded = Buffer.from(raw).toString("base64url");
 
@@ -592,17 +596,22 @@ export class GmailBridge {
       : `Re: ${meta.subject}`;
 
     const references = meta.messageId
-      ? `In-Reply-To: ${meta.messageId}\r\nReferences: ${meta.messageId}\r\n`
-      : "";
+      ? [
+          `In-Reply-To: ${meta.messageId}`,
+          `References: ${meta.messageId}`,
+        ]
+      : [];
 
-    const raw = [
-      `To: ${meta.senderName} <${meta.senderEmail}>`,
-      `Reply-To: ${this.getAgentInboxAddress() || meta.senderEmail}`,
-      `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
-      `${references}Content-Type: text/plain; charset=utf-8`,
-      "",
-      text,
-    ].join("\r\n");
+    const raw = buildMultipartAlternativeMessage({
+      headers: [
+        `To: ${meta.senderName} <${meta.senderEmail}>`,
+        `Reply-To: ${this.getAgentInboxAddress() || meta.senderEmail}`,
+        `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
+        ...references,
+      ],
+      textBody: text,
+      htmlBody: markdownToHtml(text),
+    });
 
     const encoded = Buffer.from(raw).toString("base64url");
 
@@ -657,6 +666,166 @@ export class GmailBridge {
 
     console.log(`[gmail] using proxy ${proxy}`);
   }
+}
+
+function buildMultipartAlternativeMessage(input: {
+  headers: string[];
+  textBody: string;
+  htmlBody: string;
+}): string {
+  const boundary = `opencode-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return [
+    ...input.headers,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    "Content-Type: text/plain; charset=utf-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    input.textBody,
+    "",
+    `--${boundary}`,
+    "Content-Type: text/html; charset=utf-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    input.htmlBody,
+    "",
+    `--${boundary}--`,
+  ].join("\r\n");
+}
+
+function markdownToHtml(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const html: string[] = [
+    "<html>",
+    "<body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.55;color:#111827;\">",
+  ];
+  let paragraph: string[] = [];
+  let inList = false;
+  let inCodeBlock = false;
+  let codeLines: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    html.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+
+  const closeList = () => {
+    if (!inList) return;
+    html.push("</ul>");
+    inList = false;
+  };
+
+  const flushCodeBlock = () => {
+    if (!inCodeBlock) return;
+    html.push(
+      `<pre style="white-space:pre-wrap;background:#f3f4f6;padding:12px;border-radius:8px;"><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`,
+    );
+    inCodeBlock = false;
+    codeLines = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      flushParagraph();
+      closeList();
+      if (inCodeBlock) {
+        flushCodeBlock();
+      } else {
+        inCodeBlock = true;
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (!trimmed) {
+      flushParagraph();
+      closeList();
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      closeList();
+      const level = Math.min(headingMatch[1].length, 6);
+      html.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^-\s+(.*)$/);
+    if (bulletMatch) {
+      flushParagraph();
+      if (!inList) {
+        html.push("<ul>");
+        inList = true;
+      }
+      html.push(`<li>${renderInlineMarkdown(bulletMatch[1])}</li>`);
+      continue;
+    }
+
+    if (isStandaloneUrl(trimmed)) {
+      flushParagraph();
+      closeList();
+      const safeUrl = escapeHtml(trimmed);
+      html.push(`<p><a href="${safeUrl}">${safeUrl}</a></p>`);
+      continue;
+    }
+
+    paragraph.push(trimmed);
+  }
+
+  flushParagraph();
+  closeList();
+  flushCodeBlock();
+  html.push("</body>", "</html>");
+  return html.join("\n");
+}
+
+function renderInlineMarkdown(input: string): string {
+  const placeholders = new Map<string, string>();
+  let output = input.replace(/`([^`]+)`/g, (_, code: string) => {
+    const key = `__CODE_${placeholders.size}__`;
+    placeholders.set(
+      key,
+      `<code style="background:#f3f4f6;padding:2px 4px;border-radius:4px;">${escapeHtml(code)}</code>`,
+    );
+    return key;
+  });
+
+  output = escapeHtml(output);
+  output = output.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, label: string, url: string) => {
+    const safeUrl = escapeHtml(url);
+    return `<a href="${safeUrl}">${escapeHtml(label)}</a>`;
+  });
+  output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  output = output.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+  for (const [key, value] of placeholders) {
+    output = output.replace(key, value);
+  }
+
+  return output;
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function isStandaloneUrl(input: string): boolean {
+  return /^https?:\/\/\S+$/i.test(input);
 }
 
 function parseFromHeader(from: string): { name: string; email: string } {
