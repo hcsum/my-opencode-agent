@@ -1,3 +1,4 @@
+import type { ExecutionSlot } from "../execution-slot.js";
 import type { GmailRunRequest, RuntimeCallbacks } from "../opencode-runtime.js";
 import type { OpencodeSession } from "../opencode.js";
 import {
@@ -13,6 +14,7 @@ export interface ExecutorDeps {
   opencode: OpencodeSession;
   queue: SerialQueue;
   publicActivity: PublicEventPublisher;
+  executionSlot: ExecutionSlot;
 }
 
 export interface ExecutorCallbacks {
@@ -32,7 +34,8 @@ export class ScheduledTaskExecutor {
     callbacks: ExecutorCallbacks,
   ): Promise<void> {
     const request = this.buildSyntheticRequest(task, fireTime);
-    const runtimeCallbacks = this.buildRuntimeCallbacks(callbacks);
+    const lease = this.deps.executionSlot.begin(request.threadId);
+    const runtimeCallbacks = this.buildRuntimeCallbacks(callbacks, lease.release);
     const publicTask = buildPublicTaskContext({
       activityKey: `scheduled:${task.id}`,
       source: "scheduler",
@@ -46,7 +49,16 @@ export class ScheduledTaskExecutor {
     });
 
     await this.deps.queue.enqueue(`scheduled ${task.id}`, async () => {
-      await this.deps.opencode.startGmailRun(request, runtimeCallbacks);
+      try {
+        const started = await this.deps.opencode.startGmailRun(request, runtimeCallbacks);
+        if (!started.started || started.status !== "running") {
+          lease.release();
+        }
+        await lease.wait();
+      } catch (error) {
+        lease.release();
+        throw error;
+      }
     }, publicTask);
   }
 
@@ -81,22 +93,27 @@ export class ScheduledTaskExecutor {
 
   private buildRuntimeCallbacks(
     callbacks: ExecutorCallbacks,
+    releaseExecution: () => void,
   ): RuntimeCallbacks {
     return {
       onComplete: async (text) => {
+        releaseExecution();
         callbacks.onSuccess(text);
       },
       onFailed: async (error) => {
+        releaseExecution();
         callbacks.onFailure(error);
       },
       // Scheduled runs have no live conversation to drive interactive flow.
       // Surface the situation as a failure so the user gets a result email.
       onPermission: async () => {
+        releaseExecution();
         callbacks.onFailure(
           "Scheduled run aborted: required interactive permission approval, which is not available for scheduled tasks.",
         );
       },
       onQuestion: async () => {
+        releaseExecution();
         callbacks.onFailure(
           "Scheduled run aborted: required a follow-up question, which is not available for scheduled tasks.",
         );

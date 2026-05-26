@@ -1,6 +1,7 @@
 import { SchedulerApi } from "./api.js";
 import { ScheduledTaskExecutor } from "./executor.js";
 import { SchedulerRuntime } from "./runtime.js";
+import type { ExecutionSlot } from "../execution-slot.js";
 import type { GmailBridge } from "../gmail.js";
 import type { OpencodeSession } from "../opencode.js";
 import type { PublicEventPublisher } from "../public-activity.js";
@@ -13,6 +14,7 @@ export interface SchedulerDeps {
   queue: SerialQueue;
   bridge: GmailBridge;
   publicActivity: PublicEventPublisher;
+  executionSlot: ExecutionSlot;
 }
 
 export interface Scheduler {
@@ -25,6 +27,7 @@ export async function launchScheduler(deps: SchedulerDeps): Promise<Scheduler> {
     opencode: deps.opencode,
     queue: deps.queue,
     publicActivity: deps.publicActivity,
+    executionSlot: deps.executionSlot,
   });
 
   const runtime = new SchedulerRuntime({ executor, bridge: deps.bridge });

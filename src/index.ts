@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { loadConfig } from "./config.js";
+import { ExecutionSlot } from "./execution-slot.js";
 import { OpencodeSession } from "./opencode.js";
 import { PublicEventPublisher } from "./public-activity.js";
 import { SerialQueue } from "./queue.js";
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
     config.publicActivityDir,
     config.publicActivityMaxEvents,
   );
+  const executionSlot = new ExecutionSlot();
   initDatabase();
   const queue = new SerialQueue(publicActivity);
   const opencode = new OpencodeSession(config, publicActivity);
@@ -37,6 +39,7 @@ async function main(): Promise<void> {
       opencode,
       queue,
       publicActivity,
+      executionSlot,
     );
     launches.push(
       bridge.launch().catch((err) => console.error("[gmail] failed to start", err)),
@@ -48,6 +51,7 @@ async function main(): Promise<void> {
         queue,
         bridge,
         publicActivity,
+        executionSlot,
       })
         .then((s) => {
           scheduler = s;

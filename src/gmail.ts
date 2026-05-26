@@ -24,6 +24,7 @@ import type {
   PendingPermissionRecord,
   PendingQuestionRecord,
 } from "./db.js";
+import type { ExecutionSlot } from "./execution-slot.js";
 import { OpencodeSession } from "./opencode.js";
 import {
   buildPublicTaskContext,
@@ -61,6 +62,7 @@ export class GmailBridge {
     private readonly opencode: OpencodeSession,
     private readonly queue: SerialQueue,
     private readonly publicActivity: PublicEventPublisher,
+    private readonly executionSlot: ExecutionSlot,
   ) {
     this.workflow = new WorkflowRunner(opencode, queue, publicActivity);
   }
@@ -232,6 +234,16 @@ export class GmailBridge {
 
     const { name: senderName, email: senderEmail } = parseFromHeader(fromHeader);
     const body = this.extractTextBody(message.payload) || "";
+    const internalDateMs = parseMessageInternalDate(message.internalDate);
+
+    if (isOlderThanWindow(internalDateMs, this.config.gmailNewerThan)) {
+      console.log(
+        `[gmail] skipping stale message ${messageId}; internalDate=${message.internalDate || "(missing)"} older than ${this.config.gmailNewerThan}`,
+      );
+      await this.markRead(messageId);
+      markProcessed(messageId, threadId, subject, senderEmail);
+      return;
+    }
 
     if (!this.isAuthorizedSender(senderEmail)) {
       console.log(`[gmail] skipping unauthorized sender ${senderEmail} for ${messageId}`);
@@ -308,31 +320,39 @@ export class GmailBridge {
             ),
             publicTask,
           })
-        : await this.queue.enqueue(`gmail start ${threadId}`, async () => {
-            const opencodeStartedAt = Date.now();
-            const started = await this.opencode.startGmailRun(
-              {
-                threadId,
-                messageId,
-                senderEmail,
-                senderName,
-                subject,
-                rfcMessageId,
-                textBody,
-                timestamp: new Date(
-                  parseInt(message.internalDate || String(Date.now()), 10),
-                ),
-                sessionKey: `gmail:${threadId}`,
-                sessionTitle: `Gmail ${subject}`,
-                publicTask,
-              },
-              this.buildRuntimeCallbacks(threadId),
-            );
-            console.log(
-              `[gmail] opencode run start ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
-            );
-            return started;
-          }, publicTask);
+        : await this.startManagedRun(
+            threadId,
+            `gmail start ${threadId}`,
+            publicTask,
+            async () => {
+              const opencodeStartedAt = Date.now();
+              const started = await this.opencode.startGmailRun(
+                {
+                  threadId,
+                  messageId,
+                  senderEmail,
+                  senderName,
+                  subject,
+                  rfcMessageId,
+                  textBody,
+                  timestamp: new Date(
+                    parseInt(message.internalDate || String(Date.now()), 10),
+                  ),
+                  sessionKey: `gmail:${threadId}`,
+                  sessionTitle: `Gmail ${subject}`,
+                  publicTask,
+                },
+                this.buildRuntimeCallbacks(threadId),
+              );
+              console.log(
+                `[gmail] opencode run start ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
+              );
+              if (!started.started || started.status !== "running") {
+                this.executionSlot.release(threadId);
+              }
+              return started;
+            },
+          );
 
       console.log(
         `[gmail] queue+opencode completed ${messageId} in ${Date.now() - queuedAt}ms`,
@@ -394,8 +414,10 @@ export class GmailBridge {
     }
 
     try {
-      await this.queue.enqueue(
+      await this.startManagedRun(
+        params.threadId,
         `gmail permission ${params.pendingPermission.permissionId}`,
+        this.getPublicTask(params.threadId),
         () =>
           this.opencode.replyPermission(
             params.threadId,
@@ -444,8 +466,10 @@ export class GmailBridge {
     }
 
     try {
-      await this.queue.enqueue(
+      await this.startManagedRun(
+        params.threadId,
         `gmail question ${params.pendingQuestion.questionId}`,
+        this.getPublicTask(params.threadId),
         () =>
           this.opencode.replyQuestion(
             params.threadId,
@@ -518,9 +542,23 @@ export class GmailBridge {
           textBody: run.lastUserText,
         }),
       );
-      const publicTask = this.publicTasks.get(run.threadId);
-      if (publicTask) {
-        this.publicActivity.emit({ type: "task_started", task: publicTask });
+      if (run.status === "running") {
+        await this.startManagedRun(
+          run.threadId,
+          `gmail resume ${run.threadId}`,
+          this.getPublicTask(run.threadId),
+          async () => {
+            const resumed = await this.opencode.resumeGmailRun(
+              run.threadId,
+              this.buildRuntimeCallbacks(run.threadId),
+            );
+            if (!resumed) {
+              this.executionSlot.release(run.threadId);
+            }
+            return resumed;
+          },
+        );
+        continue;
       }
 
       await this.opencode.resumeGmailRun(
@@ -604,12 +642,15 @@ export class GmailBridge {
   private buildRuntimeCallbacks(threadId: string): RuntimeCallbacks {
     return {
       onPermission: async (request) => {
+        this.executionSlot.release(threadId);
         await this.sendReply(threadId, buildPermissionPrompt(request));
       },
       onQuestion: async (request) => {
+        this.executionSlot.release(threadId);
         await this.sendReply(threadId, buildQuestionPrompt(request));
       },
       onComplete: async (text) => {
+        this.executionSlot.release(threadId);
         await this.sendReply(threadId, text);
         const publicTask = this.publicTasks.get(threadId);
         if (publicTask) {
@@ -619,6 +660,7 @@ export class GmailBridge {
         resetThreadFailures(threadId);
       },
       onFailed: async (error) => {
+        this.executionSlot.release(threadId);
         const failures = incrementThreadFailures(threadId);
         if (failures >= 2) {
           await this.opencode.invalidateSession(`gmail:${threadId}`);
@@ -631,6 +673,39 @@ export class GmailBridge {
         }
       },
     };
+  }
+
+  private async startManagedRun<T>(
+    runKey: string,
+    label: string,
+    publicTask: PublicTaskContext,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    return this.queue.enqueue(
+      label,
+      async () => {
+        const lease = this.executionSlot.begin(runKey);
+        try {
+          const result = await action();
+          await lease.wait();
+          return result;
+        } catch (error) {
+          lease.release();
+          throw error;
+        }
+      },
+      publicTask,
+    );
+  }
+
+  private getPublicTask(threadId: string): PublicTaskContext {
+    return (
+      this.publicTasks.get(threadId) ||
+      buildPublicTaskContext({
+        activityKey: `gmail:${threadId}`,
+        source: threadId.startsWith("scheduled-task:") ? "scheduler" : "gmail",
+      })
+    );
   }
 
   private extractTextBody(
@@ -892,6 +967,41 @@ function escapeHtml(input: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function parseMessageInternalDate(raw?: string | null): number | undefined {
+  if (!raw?.trim()) return undefined;
+  const ms = Number(raw);
+  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
+
+function isOlderThanWindow(
+  internalDateMs: number | undefined,
+  window: string,
+): boolean {
+  if (!internalDateMs) return false;
+  const windowMs = parseGmailNewerThanWindow(window);
+  if (windowMs === undefined) return false;
+  return internalDateMs < Date.now() - windowMs;
+}
+
+function parseGmailNewerThanWindow(raw: string): number | undefined {
+  const match = raw.trim().match(/^(\d+)\s*([mhd])$/i);
+  if (!match) return undefined;
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+
+  switch (match[2].toLowerCase()) {
+    case "m":
+      return amount * 60 * 1000;
+    case "h":
+      return amount * 60 * 60 * 1000;
+    case "d":
+      return amount * 24 * 60 * 60 * 1000;
+    default:
+      return undefined;
+  }
 }
 
 function isStandaloneUrl(input: string): boolean {
