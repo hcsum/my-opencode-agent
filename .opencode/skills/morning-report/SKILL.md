@@ -15,15 +15,12 @@ This report is a natural fit for the scheduler. If the user asks to receive it o
   - Briefly explain the site's overall mood/theme for the day.
   - Select 2 articles that are most likely to interest the user specifically, not merely the biggest headlines.
   - Prioritize stories connected to:
-    - AI
-    - technology infrastructure
+    - technology
     - markets
     - geopolitics
-    - energy
     - software/business strategy
     - internet/product trends
     - capital flows
-    - topics the user has shown recurring interest in
 - Summaries should explain:
   - what happened
   - why it matters
