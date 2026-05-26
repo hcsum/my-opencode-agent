@@ -33,6 +33,8 @@ const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const HARD_TIMEOUT_MS = 25 * 60 * 1000;
 const POLL_INTERVAL_MS = 3000;
 const STREAM_IDLE_TIMEOUT_MS = 45000;
+const WEB_ACCESS_HANDOFF_TIMEOUT_MS = 75 * 1000;
+const DIAGNOSTIC_LOG_INTERVAL_MS = 30 * 1000;
 
 export type PermissionResponse = "once" | "always" | "reject";
 
@@ -110,6 +112,9 @@ interface ActiveRun {
     "research_started" | "web_data_started" | "draft_started" | "knowledge_update_started"
   >;
   loadedSkills: Set<string>;
+  lastProgressSummary: string;
+  lastDiagnosticAtMs: number;
+  webAccessLoadedAtMs?: number;
 }
 
 interface StreamEventPayload {
@@ -185,6 +190,7 @@ export class OpencodeRuntime {
     const run = this.installRun(meta, callbacks);
     run.publicTask = request.publicTask;
     this.ensureBackgroundLoops();
+    this.noteProgress(run, "Run created and waiting for model output.");
 
     // promptAsync can stay open until the run finishes. Keep it in the
     // background so one slow Gmail thread does not block unrelated threads.
@@ -194,6 +200,10 @@ export class OpencodeRuntime {
   }
 
   private async launchPrompt(run: ActiveRun, text: string): Promise<void> {
+    const startedAt = Date.now();
+    console.log(
+      `[opencode-runtime] prompt dispatch thread=${run.threadId} session=${run.sessionId}`,
+    );
     try {
       await this.ensureSuccess(
         this.client.session.promptAsync({
@@ -202,11 +212,19 @@ export class OpencodeRuntime {
           parts: [{ type: "text", text }],
         }),
       );
+      this.noteProgress(run, "Prompt accepted by OpenCode runtime.");
+      console.log(
+        `[opencode-runtime] prompt accepted thread=${run.threadId} in ${Date.now() - startedAt}ms`,
+      );
     } catch (error) {
       const active = this.activeRuns.get(run.threadId);
       if (!active || active.sessionId !== run.sessionId || !isActiveStatus(active.status)) {
         return;
       }
+      console.error(
+        `[opencode-runtime] prompt dispatch failed thread=${run.threadId}`,
+        error,
+      );
       await this.handleRecoverableRunError(active, error);
     }
   }
@@ -283,10 +301,6 @@ export class OpencodeRuntime {
     run.meta = { ...run.meta, startedAtMs: now };
   }
 
-  private markProgress(run: ActiveRun): void {
-    run.lastProgressAtMs = Date.now();
-  }
-
   private restoreActiveRun(
     threadId: string,
     callbacks: RuntimeCallbacks,
@@ -316,6 +330,8 @@ export class OpencodeRuntime {
       publicTask: buildPublicTaskFromMeta(meta),
       emittedStages: new Set(),
       loadedSkills: new Set(),
+      lastProgressSummary: "Restored active run.",
+      lastDiagnosticAtMs: 0,
     };
 
     this.activeRuns.set(meta.threadId, run);
@@ -344,6 +360,18 @@ export class OpencodeRuntime {
       updatedAtMs: run.updatedAtMs,
     };
     upsertThreadRun(run.meta);
+  }
+
+  private noteProgress(
+    run: ActiveRun,
+    summary: string,
+    options?: { preserveWebAccessMarker?: boolean },
+  ): void {
+    run.lastProgressAtMs = Date.now();
+    run.lastProgressSummary = summary;
+    if (!options?.preserveWebAccessMarker) {
+      run.webAccessLoadedAtMs = undefined;
+    }
   }
 
   private ensureBackgroundLoops(): void {
@@ -421,7 +449,7 @@ export class OpencodeRuntime {
       if (!threadId) return;
       const run = this.activeRuns.get(threadId);
       if (!run) return;
-      this.markProgress(run);
+      this.noteProgress(run, "Assistant message updated.");
       this.trackAssistant(run, props.info as AssistantMessage);
       await this.maybeFinalizeAssistant(run, props.info as AssistantMessage);
       return;
@@ -432,7 +460,9 @@ export class OpencodeRuntime {
       const threadId = this.sessionToThread.get(props.sessionID);
       if (!threadId) return;
       const run = this.activeRuns.get(threadId);
-      if (run) this.markProgress(run);
+      if (run) {
+        this.noteProgress(run, `Message part updated: ${props.part.type}.`);
+      }
       this.logProgressPart(run, props.part as unknown as ToolPartEvent | TextPartEvent);
       return;
     }
@@ -464,6 +494,7 @@ export class OpencodeRuntime {
     };
 
     upsertPendingPermission(request);
+    this.noteProgress(run, `Permission requested: ${request.title}.`);
     this.updateRunState(run, "waiting_permission");
     await run.callbacks.onPermission(request);
   }
@@ -503,6 +534,7 @@ export class OpencodeRuntime {
     };
 
     upsertPendingQuestion(persisted);
+    this.noteProgress(run, "Follow-up question requested.");
     this.updateRunState(run, "waiting_question");
     await run.callbacks.onQuestion(request);
   }
@@ -524,11 +556,16 @@ export class OpencodeRuntime {
         continue;
       }
 
+      const sessionStatus = statusMap?.[run.sessionId]?.type;
+      this.maybeLogDiagnostic(run, now, sessionStatus);
+
+      if (shouldFailWebAccessHandoff(run, now)) {
+        await this.failRun(run.threadId, buildWebAccessHandoffMessage(run, sessionStatus));
+        continue;
+      }
+
       if (now - run.lastProgressAtMs > IDLE_TIMEOUT_MS) {
-        await this.failRun(
-          run.threadId,
-          `OpenCode run idle for over ${IDLE_TIMEOUT_MS / 60000} minutes (no new output from the model)`,
-        );
+        await this.failRun(run.threadId, buildIdleTimeoutMessage(run, sessionStatus));
         continue;
       }
 
@@ -540,7 +577,6 @@ export class OpencodeRuntime {
         continue;
       }
 
-      const sessionStatus = statusMap?.[run.sessionId]?.type;
       if (sessionStatus === "busy") {
         continue;
       }
@@ -562,6 +598,7 @@ export class OpencodeRuntime {
     const latest = findLatestCompletedAssistantMessage(messages, run.startedAtMs);
     if (!latest) return;
 
+    this.noteProgress(run, "Terminal assistant message detected.");
     this.trackAssistant(run, latest.info);
     await this.completeRun(run, collectMessageText(latest.parts), latest.info.error);
   }
@@ -593,6 +630,7 @@ export class OpencodeRuntime {
     });
 
     if (!response || response.info.role !== "assistant") return;
+    this.noteProgress(run, "Assistant produced terminal response.");
     await this.completeRun(run, collectMessageText(response.parts), response.info.error);
   }
 
@@ -628,6 +666,9 @@ export class OpencodeRuntime {
     clearPendingPermission(run.threadId);
     clearPendingQuestion(run.threadId);
     this.updateRunState(run, isError ? "failed" : "completed", errorMessage);
+    console.log(
+      `[opencode-runtime] finalized thread=${run.threadId} status=${isError ? "failed" : "completed"} lastProgress="${run.lastProgressSummary}"`,
+    );
     if (isError) {
       this.publicActivity.emit({
         type: "task_failed",
@@ -748,6 +789,16 @@ export class OpencodeRuntime {
     if (part.type === "tool") {
       const label = part.state?.title?.trim() || part.tool;
       const state = part.state?.status;
+      if (run && state) {
+        const summary = `Tool ${state}: ${label}`;
+        const skillName = extractLoadedSkillName(label);
+        if (skillName === "web-access" && state === "completed") {
+          run.webAccessLoadedAtMs = Date.now();
+          this.noteProgress(run, summary, { preserveWebAccessMarker: true });
+        } else {
+          this.noteProgress(run, summary);
+        }
+      }
       if (state === "running") {
         console.log(`[opencode] tool running: ${label}`);
       } else if (state === "completed") {
@@ -766,10 +817,27 @@ export class OpencodeRuntime {
     if (part.metadata?.openai?.phase !== "commentary") return;
     const text = part.text.trim();
     if (!text) return;
+    if (run) {
+      this.noteProgress(run, `Commentary: ${truncateForLog(text, 120)}`);
+    }
     console.log(`[opencode] ${text}`);
     if (run) {
       this.maybeEmitCommentaryStages(run, text);
     }
+  }
+
+  private maybeLogDiagnostic(
+    run: ActiveRun,
+    now: number,
+    sessionStatus: string | undefined,
+  ): void {
+    const idleForMs = now - run.lastProgressAtMs;
+    if (idleForMs < DIAGNOSTIC_LOG_INTERVAL_MS) return;
+    if (now - run.lastDiagnosticAtMs < DIAGNOSTIC_LOG_INTERVAL_MS) return;
+    run.lastDiagnosticAtMs = now;
+    console.warn(
+      `[opencode-runtime] idle diagnostic thread=${run.threadId} session=${run.sessionId} idleFor=${formatDuration(idleForMs)} sessionStatus=${sessionStatus || "unknown"} lastProgress="${run.lastProgressSummary}"`,
+    );
   }
 
   private async unwrap<T>(promise: Promise<{ data?: T; error?: unknown }>): Promise<T> {
@@ -912,6 +980,49 @@ function extractErrorMessage(error: unknown): string {
 
 function matchesAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
+}
+
+function shouldFailWebAccessHandoff(run: ActiveRun, now: number): boolean {
+  if (!run.webAccessLoadedAtMs) return false;
+  return now - run.webAccessLoadedAtMs > WEB_ACCESS_HANDOFF_TIMEOUT_MS;
+}
+
+function buildWebAccessHandoffMessage(
+  run: ActiveRun,
+  sessionStatus: string | undefined,
+): string {
+  const idleForMs = Date.now() - (run.webAccessLoadedAtMs || run.lastProgressAtMs);
+  return [
+    `OpenCode stalled after loading web-access and produced no follow-up activity for ${formatDuration(idleForMs)}.`,
+    `Last progress: ${run.lastProgressSummary}.`,
+    `Session status: ${sessionStatus || "unknown"}.`,
+    "This usually means the browser handoff never started or the model stopped before invoking it.",
+  ].join(" ");
+}
+
+function buildIdleTimeoutMessage(
+  run: ActiveRun,
+  sessionStatus: string | undefined,
+): string {
+  return [
+    `OpenCode run idle for over ${IDLE_TIMEOUT_MS / 60000} minutes (no new output from the model).`,
+    `Last progress: ${run.lastProgressSummary}.`,
+    `Session status: ${sessionStatus || "unknown"}.`,
+  ].join(" ");
+}
+
+function truncateForLog(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 3)}...`;
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1000) return `${durationMs}ms`;
+  const seconds = durationMs / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds % 60);
+  return `${minutes}m ${remainder}s`;
 }
 
 function isActiveStatus(status: ThreadRunStatus): boolean {

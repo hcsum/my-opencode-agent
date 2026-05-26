@@ -355,7 +355,7 @@ export class GmailBridge {
           );
 
       console.log(
-        `[gmail] queue+opencode completed ${messageId} in ${Date.now() - queuedAt}ms`,
+        `[gmail] opencode slot released ${messageId} in ${Date.now() - queuedAt}ms`,
       );
 
       if (typeof result === "string") {
