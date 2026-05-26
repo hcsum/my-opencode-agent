@@ -35,6 +35,8 @@ const POLL_INTERVAL_MS = 3000;
 const STREAM_IDLE_TIMEOUT_MS = 45000;
 const WEB_ACCESS_HANDOFF_TIMEOUT_MS = 75 * 1000;
 const DIAGNOSTIC_LOG_INTERVAL_MS = 30 * 1000;
+const ASSISTANT_SHELL_STALL_TIMEOUT_MS = 30 * 1000;
+const MAX_STALL_RECOVERY_ATTEMPTS = 1;
 
 export type PermissionResponse = "once" | "always" | "reject";
 
@@ -75,6 +77,7 @@ export interface RuntimeCallbacks {
   onQuestion(request: RuntimeQuestionRequest): Promise<void>;
   onComplete(text: string): Promise<void>;
   onFailed(error: string): Promise<void>;
+  onTerminal(): Promise<void>;
 }
 
 export interface RuntimeSessionManager {
@@ -115,6 +118,10 @@ interface ActiveRun {
   lastProgressSummary: string;
   lastDiagnosticAtMs: number;
   webAccessLoadedAtMs?: number;
+  recoveryAttempts: number;
+  pendingAssistantShellMessageId?: string;
+  pendingAssistantShellCreatedAtMs?: number;
+  lastPartMessageId?: string;
 }
 
 interface StreamEventPayload {
@@ -332,6 +339,7 @@ export class OpencodeRuntime {
       loadedSkills: new Set(),
       lastProgressSummary: "Restored active run.",
       lastDiagnosticAtMs: 0,
+      recoveryAttempts: 0,
     };
 
     this.activeRuns.set(meta.threadId, run);
@@ -449,8 +457,11 @@ export class OpencodeRuntime {
       if (!threadId) return;
       const run = this.activeRuns.get(threadId);
       if (!run) return;
-      this.noteProgress(run, "Assistant message updated.");
       this.trackAssistant(run, props.info as AssistantMessage);
+      this.trackAssistantShell(run, props.info as AssistantMessage);
+      if (isTerminalAssistantMessage(props.info as AssistantMessage)) {
+        this.noteProgress(run, "Assistant message updated.");
+      }
       await this.maybeFinalizeAssistant(run, props.info as AssistantMessage);
       return;
     }
@@ -461,6 +472,10 @@ export class OpencodeRuntime {
       if (!threadId) return;
       const run = this.activeRuns.get(threadId);
       if (run) {
+        run.lastPartMessageId = props.part.messageID;
+        if (run.pendingAssistantShellMessageId === props.part.messageID) {
+          this.clearPendingAssistantShell(run);
+        }
         this.noteProgress(run, `Message part updated: ${props.part.type}.`);
       }
       this.logProgressPart(run, props.part as unknown as ToolPartEvent | TextPartEvent);
@@ -559,8 +574,19 @@ export class OpencodeRuntime {
       const sessionStatus = statusMap?.[run.sessionId]?.type;
       this.maybeLogDiagnostic(run, now, sessionStatus);
 
+      if (shouldRecoverAssistantShell(run, now, sessionStatus)) {
+        await this.recoverRunFromStall(
+          run,
+          buildAssistantShellStallMessage(run, sessionStatus),
+        );
+        continue;
+      }
+
       if (shouldFailWebAccessHandoff(run, now)) {
-        await this.failRun(run.threadId, buildWebAccessHandoffMessage(run, sessionStatus));
+        await this.recoverRunFromStall(
+          run,
+          buildWebAccessHandoffMessage(run, sessionStatus),
+        );
         continue;
       }
 
@@ -631,6 +657,7 @@ export class OpencodeRuntime {
 
     if (!response || response.info.role !== "assistant") return;
     this.noteProgress(run, "Assistant produced terminal response.");
+    this.clearPendingAssistantShell(run);
     await this.completeRun(run, collectMessageText(response.parts), response.info.error);
   }
 
@@ -686,6 +713,7 @@ export class OpencodeRuntime {
     if (run.publicTask.source !== "scheduler") {
       this.publicActivity.setIdleIfNoActiveRuns();
     }
+    await run.callbacks.onTerminal();
   }
 
   private maybeEmitToolStage(
@@ -741,6 +769,69 @@ export class OpencodeRuntime {
     await this.completeRun(run, "", new Error(message));
   }
 
+  private async recoverRunFromStall(run: ActiveRun, reason: string): Promise<void> {
+    if (run.recoveryAttempts >= MAX_STALL_RECOVERY_ATTEMPTS) {
+      await this.failRun(
+        run.threadId,
+        `${reason} Automatic recovery was already attempted and did not resolve the run.`,
+      );
+      return;
+    }
+
+    run.recoveryAttempts += 1;
+    console.warn(
+      `[opencode-runtime] recovering stalled run thread=${run.threadId} attempt=${run.recoveryAttempts} reason="${reason}"`,
+    );
+
+    const previousSessionId = run.sessionId;
+
+    try {
+      await this.ensureSuccess(
+        this.client.session.abort({
+          sessionID: previousSessionId,
+        }),
+      ).catch(() => undefined);
+
+      await this.sessionManager.invalidateSession(run.sessionKey);
+      const sessionId = await this.sessionManager.getOrCreateSessionId({
+        channel: "gmail",
+        sessionKey: run.sessionKey,
+        sessionTitle: `Gmail ${run.meta.subject}`,
+      });
+
+      const now = Date.now();
+      this.sessionToThread.delete(previousSessionId);
+      run.sessionId = sessionId;
+      run.startedAtMs = now;
+      run.updatedAtMs = now;
+      run.lastProgressAtMs = now;
+      run.meta = {
+        ...run.meta,
+        sessionId,
+        startedAtMs: now,
+        updatedAtMs: now,
+        lastError: "",
+      };
+      run.latestAssistantMessageId = undefined;
+      run.latestAssistantCreatedAt = undefined;
+      run.lastPartMessageId = undefined;
+      run.webAccessLoadedAtMs = undefined;
+      this.clearPendingAssistantShell(run);
+      this.sessionToThread.set(sessionId, run.threadId);
+      upsertThreadRun(run.meta);
+      this.noteProgress(
+        run,
+        `Restarted run after stall recovery attempt ${run.recoveryAttempts}.`,
+      );
+      await this.launchPrompt(run, run.meta.lastUserText);
+    } catch (error) {
+      await this.failRun(
+        run.threadId,
+        `${reason} Automatic recovery failed: ${extractErrorMessage(error)}`,
+      );
+    }
+  }
+
   private async handleRecoverableRunError(
     run: ActiveRun,
     error: unknown,
@@ -762,6 +853,25 @@ export class OpencodeRuntime {
     run.callbacks = callbacks;
     this.ensureBackgroundLoops();
     return run;
+  }
+
+  private trackAssistantShell(run: ActiveRun, info: AssistantMessage): void {
+    if (isTerminalAssistantMessage(info)) {
+      this.clearPendingAssistantShell(run);
+      return;
+    }
+
+    if (run.pendingAssistantShellMessageId === info.id) {
+      return;
+    }
+
+    run.pendingAssistantShellMessageId = info.id;
+    run.pendingAssistantShellCreatedAtMs = info.time.created;
+  }
+
+  private clearPendingAssistantShell(run: ActiveRun): void {
+    run.pendingAssistantShellMessageId = undefined;
+    run.pendingAssistantShellCreatedAtMs = undefined;
   }
 
   private async getFreshSessionId(request: GmailRunRequest): Promise<string> {
@@ -985,6 +1095,34 @@ function matchesAny(text: string, patterns: RegExp[]): boolean {
 function shouldFailWebAccessHandoff(run: ActiveRun, now: number): boolean {
   if (!run.webAccessLoadedAtMs) return false;
   return now - run.webAccessLoadedAtMs > WEB_ACCESS_HANDOFF_TIMEOUT_MS;
+}
+
+function shouldRecoverAssistantShell(
+  run: ActiveRun,
+  now: number,
+  sessionStatus: string | undefined,
+): boolean {
+  if (sessionStatus !== "busy") return false;
+  if (!run.pendingAssistantShellMessageId || !run.pendingAssistantShellCreatedAtMs) {
+    return false;
+  }
+  if (run.lastPartMessageId === run.pendingAssistantShellMessageId) {
+    return false;
+  }
+  return now - run.pendingAssistantShellCreatedAtMs > ASSISTANT_SHELL_STALL_TIMEOUT_MS;
+}
+
+function buildAssistantShellStallMessage(
+  run: ActiveRun,
+  sessionStatus: string | undefined,
+): string {
+  const shellAgeMs = Date.now() - (run.pendingAssistantShellCreatedAtMs || run.lastProgressAtMs);
+  return [
+    `OpenCode created an empty assistant message shell and produced no parts for ${formatDuration(shellAgeMs)}.`,
+    `Last progress: ${run.lastProgressSummary}.`,
+    `Session status: ${sessionStatus || "unknown"}.`,
+    "This usually means the tool-call loop stalled between steps while the session still reported busy.",
+  ].join(" ");
 }
 
 function buildWebAccessHandoffMessage(

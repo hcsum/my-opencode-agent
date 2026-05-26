@@ -16,6 +16,7 @@ import {
   isProcessed,
   listActiveThreadRuns,
   markProcessed,
+  refreshClaim,
   releaseClaim,
   resetThreadFailures,
   tryClaimMessage,
@@ -188,18 +189,17 @@ export class GmailBridge {
     let newCount = 0;
     for (const msg of messages) {
       if (!msg.id || isProcessed(msg.id)) continue;
+      const messageId = msg.id;
       if (!tryClaimMessage(msg.id)) {
         console.log(`[gmail] skipped claimed message ${msg.id}`);
         continue;
       }
       newCount++;
       console.log(`[gmail] processing new message ${msg.id}`);
-      try {
-        await this.processMessage(msg.id);
-      } catch (err) {
-        releaseClaim(msg.id);
-        console.error(`[gmail] failed to process message ${msg.id}`, err);
-      }
+      void this.processMessage(messageId).catch((err) => {
+        releaseClaim(messageId);
+        console.error(`[gmail] failed to process message ${messageId}`, err);
+      });
     }
 
     console.log(
@@ -210,103 +210,109 @@ export class GmailBridge {
 
   private async processMessage(messageId: string): Promise<void> {
     if (!this.gmail) return;
-
-    const startedAt = Date.now();
-    const res = await this.gmail.users.messages.get({
-      userId: "me",
-      id: messageId,
-      format: "full",
-    });
-    console.log(`[gmail] fetched ${messageId} in ${Date.now() - startedAt}ms`);
-
-    const message = res.data;
-    const headers = message.payload?.headers || [];
-    const threadId = message.threadId || messageId;
-
-    const fromHeader =
-      headers.find((h) => h.name?.toLowerCase() === "from")?.value || "";
-    const subject =
-      headers.find((h) => h.name?.toLowerCase() === "subject")?.value ||
-      "(no subject)";
-    const rfcMessageId =
-      headers.find((h) => h.name?.toLowerCase() === "message-id")?.value ||
-      "";
-
-    const { name: senderName, email: senderEmail } = parseFromHeader(fromHeader);
-    const body = this.extractTextBody(message.payload) || "";
-    const internalDateMs = parseMessageInternalDate(message.internalDate);
-
-    if (isOlderThanWindow(internalDateMs, this.config.gmailNewerThan)) {
-      console.log(
-        `[gmail] skipping stale message ${messageId}; internalDate=${message.internalDate || "(missing)"} older than ${this.config.gmailNewerThan}`,
-      );
-      await this.markRead(messageId);
-      markProcessed(messageId, threadId, subject, senderEmail);
-      return;
-    }
-
-    if (!this.isAuthorizedSender(senderEmail)) {
-      console.log(`[gmail] skipping unauthorized sender ${senderEmail} for ${messageId}`);
-      await this.markRead(messageId);
-      markProcessed(messageId, threadId, subject, senderEmail);
-      return;
-    }
-
-    this.threadMeta.set(threadId, {
-      senderEmail,
-      senderName,
-      subject,
-      messageId: rfcMessageId,
-    });
-
-    const textBody = stripQuotedReply(body).trim() || subject;
-    const workflowCommand = this.workflow.parse(textBody);
-    const publicTask =
-      this.publicTasks.get(threadId) ||
-      buildPublicTaskContext({
-        activityKey: `gmail:${threadId}`,
-        source: workflowCommand ? "workflow" : "gmail",
-        workflowKind: workflowCommand?.kind,
-        subject,
-        textBody,
-      });
-    this.publicTasks.set(threadId, publicTask);
-
-    const pendingPermission = getPendingPermission(threadId);
-    if (pendingPermission) {
-      await this.handlePendingPermission({
-        messageId,
-        threadId,
-        textBody,
-        pendingPermission,
-      });
-      return;
-    }
-
-    const pendingQuestion = getPendingQuestion(threadId);
-    if (pendingQuestion) {
-      await this.handlePendingQuestion({
-        messageId,
-        threadId,
-        textBody,
-        pendingQuestion,
-      });
-      return;
-    }
-
-    if (this.opencode.hasActiveGmailRun(threadId)) {
-      await this.sendReply(threadId, buildAlreadyRunningReply());
-      await this.markRead(messageId);
-      markProcessed(messageId, threadId, subject, senderEmail);
-      return;
-    }
-
-    console.log(
-      `[gmail] enqueue from=${senderName} <${senderEmail}> subject=${subject}`,
-    );
-    this.publicActivity.emit({ type: "task_received", task: publicTask });
+    const stopClaimHeartbeat = this.startClaimHeartbeat(messageId);
+    let threadId = messageId;
+    let subject = "(no subject)";
+    let senderEmail = "";
+    let publicTask: PublicTaskContext | undefined;
 
     try {
+      const startedAt = Date.now();
+      const res = await this.gmail.users.messages.get({
+        userId: "me",
+        id: messageId,
+        format: "full",
+      });
+      console.log(`[gmail] fetched ${messageId} in ${Date.now() - startedAt}ms`);
+
+      const message = res.data;
+      const headers = message.payload?.headers || [];
+      threadId = message.threadId || messageId;
+
+      const fromHeader =
+        headers.find((h) => h.name?.toLowerCase() === "from")?.value || "";
+      subject =
+        headers.find((h) => h.name?.toLowerCase() === "subject")?.value ||
+        "(no subject)";
+      const rfcMessageId =
+        headers.find((h) => h.name?.toLowerCase() === "message-id")?.value ||
+        "";
+
+      const { name: senderName, email } = parseFromHeader(fromHeader);
+      senderEmail = email;
+      const body = this.extractTextBody(message.payload) || "";
+      const internalDateMs = parseMessageInternalDate(message.internalDate);
+
+      if (isOlderThanWindow(internalDateMs, this.config.gmailNewerThan)) {
+        console.log(
+          `[gmail] skipping stale message ${messageId}; internalDate=${message.internalDate || "(missing)"} older than ${this.config.gmailNewerThan}`,
+        );
+        await this.markRead(messageId);
+        markProcessed(messageId, threadId, subject, senderEmail);
+        return;
+      }
+
+      if (!this.isAuthorizedSender(senderEmail)) {
+        console.log(`[gmail] skipping unauthorized sender ${senderEmail} for ${messageId}`);
+        await this.markRead(messageId);
+        markProcessed(messageId, threadId, subject, senderEmail);
+        return;
+      }
+
+      this.threadMeta.set(threadId, {
+        senderEmail,
+        senderName,
+        subject,
+        messageId: rfcMessageId,
+      });
+
+      const textBody = stripQuotedReply(body).trim() || subject;
+      const workflowCommand = this.workflow.parse(textBody);
+      publicTask =
+        this.publicTasks.get(threadId) ||
+        buildPublicTaskContext({
+          activityKey: `gmail:${threadId}`,
+          source: workflowCommand ? "workflow" : "gmail",
+          workflowKind: workflowCommand?.kind,
+          subject,
+          textBody,
+        });
+      this.publicTasks.set(threadId, publicTask);
+
+      const pendingPermission = getPendingPermission(threadId);
+      if (pendingPermission) {
+        await this.handlePendingPermission({
+          messageId,
+          threadId,
+          textBody,
+          pendingPermission,
+        });
+        return;
+      }
+
+      const pendingQuestion = getPendingQuestion(threadId);
+      if (pendingQuestion) {
+        await this.handlePendingQuestion({
+          messageId,
+          threadId,
+          textBody,
+          pendingQuestion,
+        });
+        return;
+      }
+
+      if (this.opencode.hasActiveGmailRun(threadId)) {
+        await this.sendReply(threadId, buildAlreadyRunningReply());
+        await this.markRead(messageId);
+        markProcessed(messageId, threadId, subject, senderEmail);
+        return;
+      }
+
+      console.log(
+        `[gmail] enqueue from=${senderName} <${senderEmail}> subject=${subject}`,
+      );
+      this.publicActivity.emit({ type: "task_received", task: publicTask });
+
       const queuedAt = Date.now();
       const result = workflowCommand
         ? await this.workflow.run({
@@ -325,6 +331,7 @@ export class GmailBridge {
             `gmail start ${threadId}`,
             publicTask,
             async () => {
+              const ensuredPublicTask = publicTask as PublicTaskContext;
               const opencodeStartedAt = Date.now();
               const started = await this.opencode.startGmailRun(
                 {
@@ -340,7 +347,7 @@ export class GmailBridge {
                   ),
                   sessionKey: `gmail:${threadId}`,
                   sessionTitle: `Gmail ${subject}`,
-                  publicTask,
+                  publicTask: ensuredPublicTask,
                 },
                 this.buildRuntimeCallbacks(threadId),
               );
@@ -379,14 +386,18 @@ export class GmailBridge {
       if (failures >= 2) {
         await this.opencode.invalidateSession(`gmail:${threadId}`);
       }
-      this.publicActivity.emit({
-        type: "task_failed",
-        task: publicTask,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      if (publicTask) {
+        this.publicActivity.emit({
+          type: "task_failed",
+          task: publicTask,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       this.publicActivity.setIdleIfNoActiveRuns();
       this.publicTasks.delete(threadId);
       throw err;
+    } finally {
+      stopClaimHeartbeat();
     }
   }
 
@@ -414,17 +425,11 @@ export class GmailBridge {
     }
 
     try {
-      await this.startManagedRun(
+      await this.opencode.replyPermission(
         params.threadId,
-        `gmail permission ${params.pendingPermission.permissionId}`,
-        this.getPublicTask(params.threadId),
-        () =>
-          this.opencode.replyPermission(
-            params.threadId,
-            params.pendingPermission.permissionId,
-            decision,
-            this.buildRuntimeCallbacks(params.threadId),
-          ),
+        params.pendingPermission.permissionId,
+        decision,
+        this.buildRuntimeCallbacks(params.threadId),
       );
     } catch (err) {
       await this.handleReplyForwardFailure(params.threadId, "permission", err);
@@ -466,17 +471,11 @@ export class GmailBridge {
     }
 
     try {
-      await this.startManagedRun(
+      await this.opencode.replyQuestion(
         params.threadId,
-        `gmail question ${params.pendingQuestion.questionId}`,
-        this.getPublicTask(params.threadId),
-        () =>
-          this.opencode.replyQuestion(
-            params.threadId,
-            params.pendingQuestion.questionId,
-            answers,
-            this.buildRuntimeCallbacks(params.threadId),
-          ),
+        params.pendingQuestion.questionId,
+        answers,
+        this.buildRuntimeCallbacks(params.threadId),
       );
     } catch (err) {
       await this.handleReplyForwardFailure(params.threadId, "question", err);
@@ -642,15 +641,12 @@ export class GmailBridge {
   private buildRuntimeCallbacks(threadId: string): RuntimeCallbacks {
     return {
       onPermission: async (request) => {
-        this.executionSlot.release(threadId);
         await this.sendReply(threadId, buildPermissionPrompt(request));
       },
       onQuestion: async (request) => {
-        this.executionSlot.release(threadId);
         await this.sendReply(threadId, buildQuestionPrompt(request));
       },
       onComplete: async (text) => {
-        this.executionSlot.release(threadId);
         await this.sendReply(threadId, text);
         const publicTask = this.publicTasks.get(threadId);
         if (publicTask) {
@@ -660,7 +656,6 @@ export class GmailBridge {
         resetThreadFailures(threadId);
       },
       onFailed: async (error) => {
-        this.executionSlot.release(threadId);
         const failures = incrementThreadFailures(threadId);
         if (failures >= 2) {
           await this.opencode.invalidateSession(`gmail:${threadId}`);
@@ -672,7 +667,17 @@ export class GmailBridge {
           this.publicTasks.delete(threadId);
         }
       },
+      onTerminal: async () => {
+        this.executionSlot.release(threadId);
+      },
     };
+  }
+
+  private startClaimHeartbeat(messageId: string): () => void {
+    const timer = setInterval(() => {
+      refreshClaim(messageId);
+    }, 5 * 60 * 1000);
+    return () => clearInterval(timer);
   }
 
   private async startManagedRun<T>(

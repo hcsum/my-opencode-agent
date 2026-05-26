@@ -93,6 +93,12 @@ export function releaseClaim(gmailMessageId: string): void {
   );
 }
 
+export function refreshClaim(gmailMessageId: string): void {
+  db.prepare(
+    "UPDATE message_claims SET claimed_at_ms = ? WHERE gmail_message_id = ?",
+  ).run(Date.now(), gmailMessageId);
+}
+
 export function markProcessed(
   gmailMessageId: string,
   threadId: string,

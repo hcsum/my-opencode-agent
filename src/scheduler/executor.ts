@@ -97,11 +97,9 @@ export class ScheduledTaskExecutor {
   ): RuntimeCallbacks {
     return {
       onComplete: async (text) => {
-        releaseExecution();
         callbacks.onSuccess(text);
       },
       onFailed: async (error) => {
-        releaseExecution();
         callbacks.onFailure(error);
       },
       // Scheduled runs have no live conversation to drive interactive flow.
@@ -117,6 +115,9 @@ export class ScheduledTaskExecutor {
         callbacks.onFailure(
           "Scheduled run aborted: required a follow-up question, which is not available for scheduled tasks.",
         );
+      },
+      onTerminal: async () => {
+        releaseExecution();
       },
     };
   }
