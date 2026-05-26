@@ -11,6 +11,7 @@
     "notes:bootstrap": "bash scripts/bootstrap-notes.sh",
     "notes:push": "bash scripts/push-notes.sh",
     "notes:sync": "bash scripts/sync-notes.sh",
+    "opencode:login:openai": "opencode auth login -p openai",
     "start": "node dist/index.js",
     "opencode": "bash scripts/opencode-local.sh",
     "serve": "bash scripts/start-opencode-serve.sh",
