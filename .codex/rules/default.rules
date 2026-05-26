@@ -1,0 +1,158 @@
+prefix_rule(
+    pattern = ["git", "status"],
+    match = [
+        ["git", "status"],
+        ["git", "status", "--short"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "diff"],
+    match = [
+        ["git", "diff"],
+        ["git", "diff", "--stat"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "show"],
+    match = [
+        ["git", "show"],
+        ["git", "show", "HEAD"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "log"],
+    match = [
+        ["git", "log"],
+        ["git", "log", "--oneline"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "branch"],
+    match = [
+        ["git", "branch"],
+        ["git", "branch", "--show-current"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "pull"],
+    match = [
+        ["git", "pull"],
+        ["git", "pull", "--rebase"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "push"],
+    match = [
+        ["git", "push"],
+        ["git", "push", "origin", "main"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "add"],
+    match = [
+        ["git", "add", "README.md"],
+        ["git", "add", "-A"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "commit", "-m"],
+    match = [
+        ["git", "commit", "-m", "test"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "http://127.0.0.1:3456/health"],
+    justification = "Allow local browser proxy health checks.",
+    match = [
+        ["curl", "-s", "http://127.0.0.1:3456/health"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "http://127.0.0.1:3456/targets"],
+    justification = "Allow listing tabs from the local browser proxy.",
+    match = [
+        ["curl", "-s", "http://127.0.0.1:3456/targets"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "--get", "http://127.0.0.1:3456/new"],
+    justification = "Allow opening new tabs through the local browser proxy when URL is passed as a separate argument.",
+    match = [
+        ["curl", "-s", "--get", "http://127.0.0.1:3456/new", "--data-urlencode", "url=https://example.com"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "--get", "http://127.0.0.1:3456/info"],
+    justification = "Allow reading tab metadata from the local browser proxy.",
+    match = [
+        ["curl", "-s", "--get", "http://127.0.0.1:3456/info", "--data-urlencode", "target=abc"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "--get", "http://127.0.0.1:3456/close"],
+    justification = "Allow closing tabs created through the local browser proxy.",
+    match = [
+        ["curl", "-s", "--get", "http://127.0.0.1:3456/close", "--data-urlencode", "target=abc"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "--get", "http://127.0.0.1:3456/navigate"],
+    justification = "Allow navigation through the local browser proxy when parameters are passed separately.",
+    match = [
+        ["curl", "-s", "--get", "http://127.0.0.1:3456/navigate", "--data-urlencode", "target=abc", "--data-urlencode", "url=https://example.com"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "--get", "http://127.0.0.1:3456/back"],
+    justification = "Allow back navigation through the local browser proxy.",
+    match = [
+        ["curl", "-s", "--get", "http://127.0.0.1:3456/back", "--data-urlencode", "target=abc"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "--get", "http://127.0.0.1:3456/screenshot"],
+    justification = "Allow screenshots through the local browser proxy when arguments are passed separately.",
+    match = [
+        ["curl", "-s", "--get", "http://127.0.0.1:3456/screenshot", "--data-urlencode", "target=abc", "--data-urlencode", "file=/tmp/shot.png"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "-X", "POST", "http://127.0.0.1:3456/eval"],
+    justification = "Allow DOM extraction and scripted reads through the local browser proxy.",
+    match = [
+        ["curl", "-s", "-X", "POST", "http://127.0.0.1:3456/eval", "--data", "document.title"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "-X", "POST", "http://127.0.0.1:3456/click"],
+    justification = "Allow clicks through the local browser proxy.",
+    match = [
+        ["curl", "-s", "-X", "POST", "http://127.0.0.1:3456/click", "--data", "button"],
+    ],
+)
+
+prefix_rule(
+    pattern = ["curl", "-s", "http://127.0.0.1:9333/json/version"],
+    justification = "Allow local Chromium remote-debugging introspection for browser connection checks.",
+    match = [
+        ["curl", "-s", "http://127.0.0.1:9333/json/version"],
+    ],
+)
