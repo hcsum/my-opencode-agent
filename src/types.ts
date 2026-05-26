@@ -16,6 +16,10 @@ export interface AppConfig {
   schedulerMaxTasks: number;
   schedulerMinIntervalMinutes: number;
   publicActivityMaxEvents: number;
+  deployCommitSha?: string;
+  deployRunId?: string;
+  deployActor?: string;
+  deployedAt?: string;
 }
 
 export type WorkflowJobKind = "ingest" | "query" | "lint";

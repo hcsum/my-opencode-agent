@@ -12,6 +12,10 @@ services:
       - GMAIL_NEWER_THAN=10m
       # Optional: override the model set in .opencode/opencode.json per-deployment
       - OPENCODE_MODEL=openai/gpt-5.4
+      - DEPLOY_COMMIT_SHA=${DEPLOY_COMMIT_SHA:-}
+      - DEPLOY_RUN_ID=${DEPLOY_RUN_ID:-}
+      - DEPLOY_ACTOR=${DEPLOY_ACTOR:-}
+      - DEPLOYED_AT=${DEPLOYED_AT:-}
     volumes:
       # Persist only runtime data; app code and dependencies come from the image.
       - ./.data:/workspace/.data

@@ -28,5 +28,9 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             bash scripts/sync-notes.sh
+            export DEPLOY_COMMIT_SHA="${{ github.sha }}"
+            export DEPLOY_RUN_ID="${{ github.run_id }}"
+            export DEPLOY_ACTOR="${{ github.actor }}"
+            export DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             docker compose up -d --build
             docker compose ps

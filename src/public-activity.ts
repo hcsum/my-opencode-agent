@@ -22,6 +22,7 @@ const SKILL_ALLOWLIST = new Set([
 ]);
 
 export type PublicEventType =
+  | "deployment"
   | "agent_idle"
   | "task_received"
   | "task_queued"
@@ -46,6 +47,13 @@ export interface PublicTaskContext {
 }
 
 export type PublicDomainEvent =
+  | {
+      type: "deployment";
+      commitSha?: string;
+      runId?: string;
+      actor?: string;
+      deployedAt?: string;
+    }
   | { type: "agent_idle" }
   | { type: "task_received"; task: PublicTaskContext }
   | { type: "task_queued"; task: PublicTaskContext }
@@ -71,6 +79,9 @@ export interface PublicActivityEntry {
   taskType?: string;
   skillName?: string;
   durationMs?: number;
+  commitSha?: string;
+  runId?: string;
+  actor?: string;
 }
 
 export interface PublicCurrentState {
@@ -83,21 +94,45 @@ export interface PublicCurrentState {
   taskType?: string;
 }
 
+interface PublicActivityFile {
+  updatedAt: string;
+  events: PublicActivityEntry[];
+  meta?: {
+    deploymentFingerprint?: string;
+  };
+}
+
+interface DeploymentInfo {
+  commitSha?: string;
+  runId?: string;
+  actor?: string;
+  deployedAt?: string;
+}
+
 export class PublicEventPublisher {
   private readonly currentPath: string;
   private readonly eventsPath: string;
   private readonly activeRuns = new Set<string>();
   private readonly maxEvents: number;
+  private readonly deploymentInfo?: DeploymentInfo;
   private events: PublicActivityEntry[] = [];
   private current: PublicCurrentState;
   private sequence = 0;
+  private deploymentFingerprint?: string;
 
-  constructor(dir: string, maxEvents = DEFAULT_MAX_EVENTS) {
+  constructor(
+    dir: string,
+    maxEvents = DEFAULT_MAX_EVENTS,
+    deploymentInfo?: DeploymentInfo,
+  ) {
     this.maxEvents = maxEvents > 0 ? maxEvents : DEFAULT_MAX_EVENTS;
+    this.deploymentInfo = deploymentInfo;
     fs.mkdirSync(dir, { recursive: true });
     this.currentPath = path.join(dir, "current.json");
     this.eventsPath = path.join(dir, "events.json");
     this.current = this.buildIdleState(new Date().toISOString());
+    this.loadSnapshot();
+    this.recordDeploymentIfNeeded();
     this.writeSnapshot();
   }
 
@@ -148,6 +183,18 @@ export class PublicEventPublisher {
     const ts = new Date().toISOString();
 
     switch (event.type) {
+      case "deployment":
+        return {
+          id: this.nextId("deployment"),
+          ts: event.deployedAt || ts,
+          type: event.type,
+          status: "deployment",
+          title: buildDeploymentTitle(event.commitSha),
+          ...(buildDeploymentSummary(event) ? { summary: buildDeploymentSummary(event) } : {}),
+          ...(event.commitSha ? { commitSha: event.commitSha } : {}),
+          ...(event.runId ? { runId: event.runId } : {}),
+          ...(event.actor ? { actor: event.actor } : {}),
+        };
       case "agent_idle":
         return {
           id: this.nextId("idle"),
@@ -286,12 +333,60 @@ export class PublicEventPublisher {
     writeJsonAtomic(this.eventsPath, {
       updatedAt: new Date().toISOString(),
       events: this.events,
+      meta: {
+        ...(this.deploymentFingerprint
+          ? { deploymentFingerprint: this.deploymentFingerprint }
+          : {}),
+      },
     });
   }
 
   private nextId(prefix: string): string {
     this.sequence += 1;
     return `${prefix}-${Date.now()}-${this.sequence}`;
+  }
+
+  private loadSnapshot(): void {
+    const eventsFile = readJsonFile<PublicActivityFile>(this.eventsPath);
+    const current = readJsonFile<PublicCurrentState>(this.currentPath);
+
+    if (eventsFile?.events) {
+      this.events = eventsFile.events.slice(-this.maxEvents);
+      this.sequence = this.events.length;
+      this.deploymentFingerprint = eventsFile.meta?.deploymentFingerprint;
+    }
+
+    if (current) {
+      this.current = current;
+    } else if (this.events.length > 0) {
+      const last = this.events.at(-1);
+      if (last) {
+        this.current = {
+          status: last.status,
+          title: last.title,
+          ...(last.summary ? { summary: last.summary } : {}),
+          updatedAt: last.ts,
+          activeCount: 0,
+          ...(last.source ? { source: last.source } : {}),
+          ...(last.taskType ? { taskType: last.taskType } : {}),
+        };
+      }
+    }
+  }
+
+  private recordDeploymentIfNeeded(): void {
+    if (!this.deploymentInfo) return;
+    const fingerprint = buildDeploymentFingerprint(this.deploymentInfo);
+    if (!fingerprint) return;
+    if (this.deploymentFingerprint === fingerprint) return;
+
+    this.deploymentFingerprint = fingerprint;
+    this.appendEntry(
+      this.renderEvent({
+        type: "deployment",
+        ...this.deploymentInfo,
+      }) as PublicActivityEntry,
+    );
   }
 }
 
@@ -392,6 +487,15 @@ function writeJsonAtomic(filePath: string, data: unknown): void {
   fs.renameSync(tempPath, filePath);
 }
 
+function readJsonFile<T>(filePath: string): T | undefined {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(raw) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 function sanitizeFailure(input?: string): string | undefined {
   if (!input?.trim()) return undefined;
   if (/permission/i.test(input)) {
@@ -413,4 +517,26 @@ function formatDuration(durationMs: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.round(seconds % 60);
   return `${minutes}m ${remainder}s`;
+}
+
+function buildDeploymentFingerprint(info: DeploymentInfo): string | undefined {
+  const parts = [info.commitSha, info.runId, info.deployedAt]
+    .filter(Boolean)
+    .map((item) => item?.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return undefined;
+  return parts.join(":");
+}
+
+function buildDeploymentTitle(commitSha?: string): string {
+  return commitSha
+    ? `Deployment: ${commitSha.slice(0, 7)}`
+    : "Deployment completed";
+}
+
+function buildDeploymentSummary(event: DeploymentInfo): string | undefined {
+  const parts: string[] = [];
+  if (event.actor) parts.push(`by ${event.actor}`);
+  if (event.runId) parts.push(`run ${event.runId}`);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }

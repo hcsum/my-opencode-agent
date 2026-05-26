@@ -22,6 +22,12 @@ async function main(): Promise<void> {
   const publicActivity = new PublicEventPublisher(
     config.publicActivityDir,
     config.publicActivityMaxEvents,
+    {
+      commitSha: config.deployCommitSha,
+      runId: config.deployRunId,
+      actor: config.deployActor,
+      deployedAt: config.deployedAt,
+    },
   );
   const executionSlot = new ExecutionSlot();
   initDatabase();
