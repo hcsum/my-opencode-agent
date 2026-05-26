@@ -18,6 +18,12 @@ import {
   upsertPendingQuestion,
   upsertThreadRun,
 } from "./db.js";
+import {
+  buildPublicTaskContext,
+  extractLoadedSkillName,
+  type PublicEventPublisher,
+  type PublicTaskContext,
+} from "./public-activity.js";
 import type { AppConfig, QuestionPrompt, ThreadRunStatus } from "./types.js";
 
 // Heartbeat-based timeout: a run is killed only if the model stops producing
@@ -41,6 +47,7 @@ export interface GmailRunRequest {
   timestamp: Date;
   sessionKey: string;
   sessionTitle: string;
+  publicTask: PublicTaskContext;
 }
 
 export interface RuntimePermissionRequest {
@@ -98,6 +105,11 @@ interface ActiveRun {
   latestAssistantCreatedAt?: number;
   finalizing: boolean;
   meta: ThreadRunRecord;
+  publicTask: PublicTaskContext;
+  emittedStages: Set<
+    "research_started" | "web_data_started" | "draft_started" | "knowledge_update_started"
+  >;
+  loadedSkills: Set<string>;
 }
 
 interface StreamEventPayload {
@@ -138,6 +150,7 @@ export class OpencodeRuntime {
     private readonly client: OpencodeClient,
     private readonly config: AppConfig,
     private readonly sessionManager: RuntimeSessionManager,
+    private readonly publicActivity: PublicEventPublisher,
   ) {}
 
   async startRun(
@@ -170,6 +183,7 @@ export class OpencodeRuntime {
 
     upsertThreadRun(meta);
     const run = this.installRun(meta, callbacks);
+    run.publicTask = request.publicTask;
     this.ensureBackgroundLoops();
 
     // promptAsync can stay open until the run finishes. Keep it in the
@@ -299,6 +313,9 @@ export class OpencodeRuntime {
       status: meta.status,
       finalizing: false,
       meta,
+      publicTask: buildPublicTaskFromMeta(meta),
+      emittedStages: new Set(),
+      loadedSkills: new Set(),
     };
 
     this.activeRuns.set(meta.threadId, run);
@@ -416,7 +433,7 @@ export class OpencodeRuntime {
       if (!threadId) return;
       const run = this.activeRuns.get(threadId);
       if (run) this.markProgress(run);
-      this.logProgressPart(props.part as unknown as ToolPartEvent | TextPartEvent);
+      this.logProgressPart(run, props.part as unknown as ToolPartEvent | TextPartEvent);
       return;
     }
 
@@ -611,7 +628,70 @@ export class OpencodeRuntime {
     clearPendingPermission(run.threadId);
     clearPendingQuestion(run.threadId);
     this.updateRunState(run, isError ? "failed" : "completed", errorMessage);
+    if (isError) {
+      this.publicActivity.emit({
+        type: "task_failed",
+        task: run.publicTask,
+        error: errorMessage,
+      });
+    } else {
+      this.publicActivity.emit({
+        type: "task_completed",
+        task: run.publicTask,
+        durationMs: Date.now() - run.runOriginAtMs,
+      });
+    }
     this.removeRun(run.threadId);
+    if (run.publicTask.source !== "scheduler") {
+      this.publicActivity.setIdleIfNoActiveRuns();
+    }
+  }
+
+  private maybeEmitToolStage(
+    run: ActiveRun,
+    part: ToolPartEvent,
+    label: string,
+  ): void {
+    const skillName = extractLoadedSkillName(label);
+    if (skillName && !run.loadedSkills.has(skillName)) {
+      run.loadedSkills.add(skillName);
+      this.publicActivity.emit({
+        type: "skill_loaded",
+        task: run.publicTask,
+        skillName,
+      });
+      if (skillName === "llm-wiki") {
+        this.emitStageOnce(run, "knowledge_update_started");
+      }
+    }
+
+    if (
+      part.tool === "webfetch" &&
+      (part.state?.status === "running" || part.state?.status === "completed")
+    ) {
+      this.emitStageOnce(run, "web_data_started");
+    }
+  }
+
+  private maybeEmitCommentaryStages(run: ActiveRun, text: string): void {
+    if (matchesAny(text, RESEARCH_PATTERNS)) {
+      this.emitStageOnce(run, "research_started");
+    }
+    if (matchesAny(text, DRAFT_PATTERNS)) {
+      this.emitStageOnce(run, "draft_started");
+    }
+    if (matchesAny(text, KNOWLEDGE_PATTERNS)) {
+      this.emitStageOnce(run, "knowledge_update_started");
+    }
+  }
+
+  private emitStageOnce(
+    run: ActiveRun,
+    stage: "research_started" | "web_data_started" | "draft_started" | "knowledge_update_started",
+  ): void {
+    if (run.emittedStages.has(stage)) return;
+    run.emittedStages.add(stage);
+    this.publicActivity.emit({ type: stage, task: run.publicTask });
   }
 
   private async failRun(threadId: string, message: string): Promise<void> {
@@ -661,7 +741,10 @@ export class OpencodeRuntime {
     }
   }
 
-  private logProgressPart(part: ToolPartEvent | TextPartEvent): void {
+  private logProgressPart(
+    run: ActiveRun | undefined,
+    part: ToolPartEvent | TextPartEvent,
+  ): void {
     if (part.type === "tool") {
       const label = part.state?.title?.trim() || part.tool;
       const state = part.state?.status;
@@ -674,6 +757,9 @@ export class OpencodeRuntime {
           `[opencode] tool failed: ${label}${part.state?.error ? ` - ${part.state.error}` : ""}`,
         );
       }
+      if (run) {
+        this.maybeEmitToolStage(run, part, label);
+      }
       return;
     }
 
@@ -681,6 +767,9 @@ export class OpencodeRuntime {
     const text = part.text.trim();
     if (!text) return;
     console.log(`[opencode] ${text}`);
+    if (run) {
+      this.maybeEmitCommentaryStages(run, text);
+    }
   }
 
   private async unwrap<T>(promise: Promise<{ data?: T; error?: unknown }>): Promise<T> {
@@ -753,10 +842,52 @@ const TERMINAL_FINISH_REASONS = new Set([
   "unknown",
 ]);
 
+const RESEARCH_PATTERNS = [
+  /research/i,
+  /source/i,
+  /news/i,
+  /抓取/,
+  /候选文章/,
+  /补抓/,
+  /锁定/,
+];
+
+const DRAFT_PATTERNS = [
+  /draft/i,
+  /writing/i,
+  /compose/i,
+  /generate/i,
+  /生成/,
+  /撰写/,
+  /整理/,
+  /简报/,
+];
+
+const KNOWLEDGE_PATTERNS = [
+  /wiki/i,
+  /knowledge/i,
+  /ingest/i,
+  /query/i,
+  /lint/i,
+  /知识/,
+  /维基/,
+];
+
 function isTerminalAssistantMessage(info: AssistantMessage): boolean {
   if (info.error) return true;
   if (!info.time.completed) return false;
   return info.finish !== undefined && TERMINAL_FINISH_REASONS.has(info.finish);
+}
+
+function buildPublicTaskFromMeta(meta: ThreadRunRecord): PublicTaskContext {
+  return buildPublicTaskContext({
+    activityKey: meta.threadId.startsWith("scheduled-task:")
+      ? `scheduled:${meta.sessionKey}`
+      : `gmail:${meta.threadId}`,
+    source: meta.threadId.startsWith("scheduled-task:") ? "scheduler" : "gmail",
+    subject: meta.subject,
+    textBody: meta.lastUserText,
+  });
 }
 
 function isSessionNotFound(err: unknown): boolean {
@@ -777,6 +908,10 @@ function extractErrorMessage(error: unknown): string {
     }
   }
   return "OpenCode request failed";
+}
+
+function matchesAny(text: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(text));
 }
 
 function isActiveStatus(status: ThreadRunStatus): boolean {

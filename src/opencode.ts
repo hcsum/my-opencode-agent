@@ -12,6 +12,7 @@ import {
   type PermissionResponse,
   type RuntimeCallbacks,
 } from "./opencode-runtime.js";
+import type { PublicEventPublisher } from "./public-activity.js";
 import { StateStore } from "./state.js";
 
 interface PromptPart {
@@ -60,7 +61,10 @@ export class OpencodeSession {
   private readonly sessionPromises = new Map<string, Promise<string>>();
   private stateCache?: PersistedState;
 
-  constructor(private readonly config: AppConfig) {
+  constructor(
+    private readonly config: AppConfig,
+    publicActivity: PublicEventPublisher,
+  ) {
     const fetch = this.buildFetch();
     this.client = createV1OpencodeClient({
       baseUrl: config.opencodeBaseUrl,
@@ -70,7 +74,12 @@ export class OpencodeSession {
       baseUrl: config.opencodeBaseUrl,
       fetch,
     });
-    this.runtime = new OpencodeRuntime(this.runtimeClient, config, this);
+    this.runtime = new OpencodeRuntime(
+      this.runtimeClient,
+      config,
+      this,
+      publicActivity,
+    );
     this.stateStore = new StateStore(config.stateFile);
   }
 

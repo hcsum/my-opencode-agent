@@ -10,6 +10,11 @@ import {
   validateIngestResult,
 } from "./ingest-validator.js";
 import { OpencodeSession, type TurnInput } from "./opencode.js";
+import {
+  buildPublicTaskContext,
+  type PublicEventPublisher,
+  type PublicTaskContext,
+} from "./public-activity.js";
 import { SerialQueue } from "./queue.js";
 import type {
   IngestLanguageMode,
@@ -29,12 +34,14 @@ interface WorkflowRequest {
   senderName: string;
   chatTitle?: string;
   timestamp: Date;
+  publicTask?: PublicTaskContext;
 }
 
 export class WorkflowRunner {
   constructor(
     private readonly opencode: OpencodeSession,
     private readonly queue: SerialQueue,
+    private readonly publicActivity?: PublicEventPublisher,
   ) {}
 
   parse(text: string): WorkflowCommand | null {
@@ -82,10 +89,23 @@ export class WorkflowRunner {
     });
 
     const label = `workflow#${jobId} ${request.command.kind}`;
+    const publicTask =
+      request.publicTask ||
+      buildPublicTaskContext({
+        activityKey: `workflow:${jobId}`,
+        source: "workflow",
+        workflowKind: request.command.kind,
+        subject: request.chatTitle,
+        textBody: request.command.rawText,
+      });
 
     try {
       return await this.queue.enqueue(label, async () => {
         updateWorkflowJobStatus({ id: jobId, status: "running" });
+        this.publicActivity?.emit({
+          type: "knowledge_update_started",
+          task: publicTask,
+        });
 
         const beforeSnapshot =
           request.command.kind === "ingest" ? captureWikiSnapshot() : undefined;
@@ -123,7 +143,7 @@ export class WorkflowRunner {
         });
 
         return `Workflow job #${jobId} (${request.command.kind}) completed.\n\n${finalResponse}`;
-      });
+      }, publicTask);
     } catch (error) {
       updateWorkflowJobStatus({
         id: jobId,

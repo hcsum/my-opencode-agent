@@ -3,6 +3,7 @@ export interface AppConfig {
   opencodeServerUsername?: string;
   opencodeServerPassword?: string;
   stateFile: string;
+  publicActivityDir: string;
   agentInboxEmail?: string;
   userEmail?: string;
   gmailTo?: string;
@@ -14,6 +15,7 @@ export interface AppConfig {
   schedulerApiPort: number;
   schedulerMaxTasks: number;
   schedulerMinIntervalMinutes: number;
+  publicActivityMaxEvents: number;
 }
 
 export type WorkflowJobKind = "ingest" | "query" | "lint";

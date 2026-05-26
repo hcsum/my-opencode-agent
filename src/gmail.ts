@@ -25,6 +25,11 @@ import type {
   PendingQuestionRecord,
 } from "./db.js";
 import { OpencodeSession } from "./opencode.js";
+import {
+  buildPublicTaskContext,
+  type PublicEventPublisher,
+  type PublicTaskContext,
+} from "./public-activity.js";
 import type {
   PermissionResponse,
   RuntimeCallbacks,
@@ -46,6 +51,7 @@ export class GmailBridge {
   private gmail: gmail_v1.Gmail | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly threadMeta = new Map<string, ThreadMeta>();
+  private readonly publicTasks = new Map<string, PublicTaskContext>();
   private readonly workflow: WorkflowRunner;
   private consecutiveErrors = 0;
   private userEmail = "";
@@ -54,8 +60,9 @@ export class GmailBridge {
     private readonly config: AppConfig,
     private readonly opencode: OpencodeSession,
     private readonly queue: SerialQueue,
+    private readonly publicActivity: PublicEventPublisher,
   ) {
-    this.workflow = new WorkflowRunner(opencode, queue);
+    this.workflow = new WorkflowRunner(opencode, queue, publicActivity);
   }
 
   async launch(): Promise<void> {
@@ -241,6 +248,17 @@ export class GmailBridge {
     });
 
     const textBody = stripQuotedReply(body).trim() || subject;
+    const workflowCommand = this.workflow.parse(textBody);
+    const publicTask =
+      this.publicTasks.get(threadId) ||
+      buildPublicTaskContext({
+        activityKey: `gmail:${threadId}`,
+        source: workflowCommand ? "workflow" : "gmail",
+        workflowKind: workflowCommand?.kind,
+        subject,
+        textBody,
+      });
+    this.publicTasks.set(threadId, publicTask);
 
     const pendingPermission = getPendingPermission(threadId);
     if (pendingPermission) {
@@ -274,10 +292,10 @@ export class GmailBridge {
     console.log(
       `[gmail] enqueue from=${senderName} <${senderEmail}> subject=${subject}`,
     );
+    this.publicActivity.emit({ type: "task_received", task: publicTask });
 
     try {
       const queuedAt = Date.now();
-      const workflowCommand = this.workflow.parse(textBody);
       const result = workflowCommand
         ? await this.workflow.run({
             command: workflowCommand,
@@ -288,6 +306,7 @@ export class GmailBridge {
             timestamp: new Date(
               parseInt(message.internalDate || String(Date.now()), 10),
             ),
+            publicTask,
           })
         : await this.queue.enqueue(`gmail start ${threadId}`, async () => {
             const opencodeStartedAt = Date.now();
@@ -305,6 +324,7 @@ export class GmailBridge {
                 ),
                 sessionKey: `gmail:${threadId}`,
                 sessionTitle: `Gmail ${subject}`,
+                publicTask,
               },
               this.buildRuntimeCallbacks(threadId),
             );
@@ -312,7 +332,7 @@ export class GmailBridge {
               `[gmail] opencode run start ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
             );
             return started;
-          });
+          }, publicTask);
 
       console.log(
         `[gmail] queue+opencode completed ${messageId} in ${Date.now() - queuedAt}ms`,
@@ -320,6 +340,10 @@ export class GmailBridge {
 
       if (typeof result === "string") {
         await this.sendReply(threadId, result);
+        this.publicActivity.emit({ type: "report_delivered", task: publicTask });
+        this.publicActivity.emit({ type: "task_completed", task: publicTask });
+        this.publicActivity.setIdleIfNoActiveRuns();
+        this.publicTasks.delete(threadId);
         resetThreadFailures(threadId);
         console.log(`[gmail] direct reply completed for thread ${threadId}`);
       }
@@ -335,6 +359,13 @@ export class GmailBridge {
       if (failures >= 2) {
         await this.opencode.invalidateSession(`gmail:${threadId}`);
       }
+      this.publicActivity.emit({
+        type: "task_failed",
+        task: publicTask,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.publicActivity.setIdleIfNoActiveRuns();
+      this.publicTasks.delete(threadId);
       throw err;
     }
   }
@@ -478,6 +509,20 @@ export class GmailBridge {
         subject: run.subject,
         messageId: run.rfcMessageId,
       });
+      this.publicTasks.set(
+        run.threadId,
+        buildPublicTaskContext({
+          activityKey: `gmail:${run.threadId}`,
+          source: run.threadId.startsWith("scheduled-task:") ? "scheduler" : "gmail",
+          subject: run.subject,
+          textBody: run.lastUserText,
+        }),
+      );
+      const publicTask = this.publicTasks.get(run.threadId);
+      if (publicTask) {
+        this.publicActivity.emit({ type: "task_started", task: publicTask });
+      }
+
       await this.opencode.resumeGmailRun(
         run.threadId,
         this.buildRuntimeCallbacks(run.threadId),
@@ -486,10 +531,20 @@ export class GmailBridge {
   }
 
   async sendScheduledResult(payload: ScheduledResultPayload): Promise<void> {
-    if (!this.gmail) return;
+    const publicTask = buildPublicTaskContext({
+      activityKey: `scheduled:${payload.taskId}`,
+      source: "scheduler",
+      summary: payload.summary,
+      textBody: payload.body,
+    });
+    if (!this.gmail) {
+      this.publicActivity.setIdleIfNoActiveRuns();
+      return;
+    }
     const recipient = this.getScheduledResultsRecipient();
     if (!recipient) {
       console.warn("[gmail] no scheduled results recipient configured; cannot deliver scheduled result");
+      this.publicActivity.setIdleIfNoActiveRuns();
       return;
     }
 
@@ -516,10 +571,15 @@ export class GmailBridge {
 
     const encoded = Buffer.from(raw).toString("base64url");
 
-    await this.gmail.users.messages.send({
-      userId: "me",
-      requestBody: { raw: encoded },
-    });
+    try {
+      await this.gmail.users.messages.send({
+        userId: "me",
+        requestBody: { raw: encoded },
+      });
+      this.publicActivity.emit({ type: "report_delivered", task: publicTask });
+    } finally {
+      this.publicActivity.setIdleIfNoActiveRuns();
+    }
   }
 
   private getAgentInboxAddress(): string | undefined {
@@ -551,6 +611,11 @@ export class GmailBridge {
       },
       onComplete: async (text) => {
         await this.sendReply(threadId, text);
+        const publicTask = this.publicTasks.get(threadId);
+        if (publicTask) {
+          this.publicActivity.emit({ type: "report_delivered", task: publicTask });
+          this.publicTasks.delete(threadId);
+        }
         resetThreadFailures(threadId);
       },
       onFailed: async (error) => {
@@ -559,6 +624,11 @@ export class GmailBridge {
           await this.opencode.invalidateSession(`gmail:${threadId}`);
         }
         await this.sendReply(threadId, buildFailureReply(error));
+        const publicTask = this.publicTasks.get(threadId);
+        if (publicTask) {
+          this.publicActivity.emit({ type: "report_delivered", task: publicTask });
+          this.publicTasks.delete(threadId);
+        }
       },
     };
   }

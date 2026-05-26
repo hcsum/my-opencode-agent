@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { loadConfig } from "./config.js";
 import { OpencodeSession } from "./opencode.js";
+import { PublicEventPublisher } from "./public-activity.js";
 import { SerialQueue } from "./queue.js";
 import { GmailBridge } from "./gmail.js";
 import { initDatabase } from "./db.js";
@@ -17,21 +18,37 @@ console.log(`[app] runtime log file: ${getRuntimeLogPath()}`);
 async function main(): Promise<void> {
   const releaseLock = acquireInstanceLock();
   const config = loadConfig();
+  const publicActivity = new PublicEventPublisher(
+    config.publicActivityDir,
+    config.publicActivityMaxEvents,
+  );
   initDatabase();
-  const queue = new SerialQueue();
-  const opencode = new OpencodeSession(config);
+  const queue = new SerialQueue(publicActivity);
+  const opencode = new OpencodeSession(config, publicActivity);
   await opencode.healthcheck();
+  publicActivity.setIdleIfNoActiveRuns();
 
   const launches: Promise<void>[] = [];
   let scheduler: Scheduler | undefined;
 
   if (config.agentInboxEmail) {
-    const bridge = new GmailBridge(config, opencode, queue);
+    const bridge = new GmailBridge(
+      config,
+      opencode,
+      queue,
+      publicActivity,
+    );
     launches.push(
       bridge.launch().catch((err) => console.error("[gmail] failed to start", err)),
     );
     launches.push(
-      launchScheduler({ config, opencode, queue, bridge })
+      launchScheduler({
+        config,
+        opencode,
+        queue,
+        bridge,
+        publicActivity,
+      })
         .then((s) => {
           scheduler = s;
         })

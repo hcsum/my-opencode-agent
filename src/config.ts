@@ -36,6 +36,9 @@ export function loadConfig(): AppConfig {
       process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
     stateFile:
       process.env.STATE_FILE?.trim() || path.join(".data", "state.json"),
+    publicActivityDir:
+      process.env.PUBLIC_ACTIVITY_DIR?.trim() ||
+      path.join(".data", "public-activity"),
     agentInboxEmail:
       process.env.AGENT_INBOX_EMAIL?.trim() ||
       process.env.GMAIL_TO?.trim() ||
@@ -55,5 +58,7 @@ export function loadConfig(): AppConfig {
     schedulerMaxTasks: Number(process.env.SCHEDULER_MAX_TASKS) || 20,
     schedulerMinIntervalMinutes:
       Number(process.env.SCHEDULER_MIN_INTERVAL_MINUTES) || 5,
+    publicActivityMaxEvents:
+      Number(process.env.PUBLIC_ACTIVITY_MAX_EVENTS) || 100,
   };
 }

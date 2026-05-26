@@ -1,5 +1,9 @@
 import type { GmailRunRequest, RuntimeCallbacks } from "../opencode-runtime.js";
 import type { OpencodeSession } from "../opencode.js";
+import {
+  buildPublicTaskContext,
+  type PublicEventPublisher,
+} from "../public-activity.js";
 import type { SerialQueue } from "../queue.js";
 import type { AppConfig } from "../types.js";
 import type { ScheduledTask } from "./types.js";
@@ -8,6 +12,7 @@ export interface ExecutorDeps {
   config: AppConfig;
   opencode: OpencodeSession;
   queue: SerialQueue;
+  publicActivity: PublicEventPublisher;
 }
 
 export interface ExecutorCallbacks {
@@ -28,10 +33,21 @@ export class ScheduledTaskExecutor {
   ): Promise<void> {
     const request = this.buildSyntheticRequest(task, fireTime);
     const runtimeCallbacks = this.buildRuntimeCallbacks(callbacks);
+    const publicTask = buildPublicTaskContext({
+      activityKey: `scheduled:${task.id}`,
+      source: "scheduler",
+      summary: task.summary,
+      textBody: task.prompt,
+    });
+
+    this.deps.publicActivity.emit({
+      type: "scheduled_report_started",
+      task: publicTask,
+    });
 
     await this.deps.queue.enqueue(`scheduled ${task.id}`, async () => {
       await this.deps.opencode.startGmailRun(request, runtimeCallbacks);
-    });
+    }, publicTask);
   }
 
   private buildSyntheticRequest(
@@ -54,6 +70,12 @@ export class ScheduledTaskExecutor {
       timestamp: new Date(fireTime),
       sessionKey: `scheduled-task:${task.id}`,
       sessionTitle: `Scheduled: ${task.summary}`,
+      publicTask: buildPublicTaskContext({
+        activityKey: `scheduled:${task.id}`,
+        source: "scheduler",
+        summary: task.summary,
+        textBody: task.prompt,
+      }),
     };
   }
 
