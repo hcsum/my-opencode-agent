@@ -35,7 +35,7 @@ const POLL_INTERVAL_MS = 3000;
 const STREAM_IDLE_TIMEOUT_MS = 45000;
 const WEB_ACCESS_HANDOFF_TIMEOUT_MS = 75 * 1000;
 const DIAGNOSTIC_LOG_INTERVAL_MS = 30 * 1000;
-const ASSISTANT_SHELL_STALL_TIMEOUT_MS = 30 * 1000;
+const ASSISTANT_SHELL_STALL_TIMEOUT_MS = 90 * 1000;
 const MAX_STALL_RECOVERY_ATTEMPTS = 1;
 
 export type PermissionResponse = "once" | "always" | "reject";
@@ -453,9 +453,7 @@ export class OpencodeRuntime {
     if (event.type === "message.updated") {
       const props = event.properties as { sessionID: string; info: Message };
       if (props.info.role !== "assistant") return;
-      const threadId = this.sessionToThread.get(props.sessionID);
-      if (!threadId) return;
-      const run = this.activeRuns.get(threadId);
+      const run = this.getRunForSession(props.sessionID);
       if (!run) return;
       this.trackAssistant(run, props.info as AssistantMessage);
       this.trackAssistantShell(run, props.info as AssistantMessage);
@@ -468,9 +466,7 @@ export class OpencodeRuntime {
 
     if (event.type === "message.part.updated") {
       const props = event.properties as { sessionID: string; part: Part };
-      const threadId = this.sessionToThread.get(props.sessionID);
-      if (!threadId) return;
-      const run = this.activeRuns.get(threadId);
+      const run = this.getRunForSession(props.sessionID);
       if (run) {
         run.lastPartMessageId = props.part.messageID;
         if (run.pendingAssistantShellMessageId === props.part.messageID) {
@@ -485,18 +481,16 @@ export class OpencodeRuntime {
     if (event.type === "session.error") {
       const props = event.properties as { sessionID?: string; error?: unknown };
       if (!props.sessionID) return;
-      const threadId = this.sessionToThread.get(props.sessionID);
-      if (!threadId) return;
-      await this.failRun(threadId, extractErrorMessage(props.error));
+      const run = this.getRunForSession(props.sessionID);
+      if (!run) return;
+      await this.failRun(run.threadId, extractErrorMessage(props.error));
     }
   }
 
   private async handlePermissionEvent(permission: PermissionRequest): Promise<void> {
-    const threadId = this.sessionToThread.get(permission.sessionID);
-    if (!threadId) return;
-
-    const run = this.activeRuns.get(threadId);
+    const run = this.getRunForSession(permission.sessionID);
     if (!run) return;
+    const threadId = run.threadId;
 
     const request: RuntimePermissionRequest = {
       threadId,
@@ -520,11 +514,9 @@ export class OpencodeRuntime {
     tool?: { messageID?: string };
     questions: QuestionInfo[];
   }): Promise<void> {
-    const threadId = this.sessionToThread.get(event.sessionID);
-    if (!threadId) return;
-
-    const run = this.activeRuns.get(threadId);
+    const run = this.getRunForSession(event.sessionID);
     if (!run) return;
+    const threadId = run.threadId;
 
     const request: RuntimeQuestionRequest = {
       threadId,
@@ -784,6 +776,7 @@ export class OpencodeRuntime {
     );
 
     const previousSessionId = run.sessionId;
+    this.sessionToThread.delete(previousSessionId);
 
     try {
       await this.ensureSuccess(
@@ -800,7 +793,6 @@ export class OpencodeRuntime {
       });
 
       const now = Date.now();
-      this.sessionToThread.delete(previousSessionId);
       run.sessionId = sessionId;
       run.startedAtMs = now;
       run.updatedAtMs = now;
@@ -830,6 +822,17 @@ export class OpencodeRuntime {
         `${reason} Automatic recovery failed: ${extractErrorMessage(error)}`,
       );
     }
+  }
+
+  private getRunForSession(sessionId: string): ActiveRun | undefined {
+    const threadId = this.sessionToThread.get(sessionId);
+    if (!threadId) return undefined;
+    const run = this.activeRuns.get(threadId);
+    if (!run) return undefined;
+    if (run.sessionId !== sessionId) {
+      return undefined;
+    }
+    return run;
   }
 
   private async handleRecoverableRunError(
