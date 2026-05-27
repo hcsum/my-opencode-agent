@@ -27,31 +27,25 @@ Defaults built into the scripts:
 - `npm run notes:bootstrap`
 Initializes `./notes` if missing and prints the current branch and origin URL.
 
-- `npm run notes:sync`
-Runs `git pull --rebase --autostash` inside `notes/`.
-
-- `npm run notes:push -- "message"`
-Runs sync first, then stages all `notes/` changes, creates a commit, and pushes it to the current branch.
-
 ## Local setup
 
 1. Set `NOTES_REPO_URL` in `.env` if this machine may need to clone `notes/`.
 2. Run `npm run notes:bootstrap`.
 3. Work normally.
-4. Commit notes changes inside `notes/`.
+4. Use normal Git commands inside `notes/` to sync, commit, and push changes.
 
 ## VPS setup
 
 1. Configure a repo-scoped deploy key for `my-agent-notes`.
 2. Add an SSH host alias like `github.com-my-agent-notes` in `/home/deploy/.ssh/config`.
 3. Set `NOTES_REPO_URL=git@github.com-my-agent-notes:hcsum/my-agent-notes.git` in the project `.env` on the VPS.
-4. Deploy normally. The GitHub Actions workflow already runs `bash scripts/sync-notes.sh` before `docker compose up -d --build`.
+4. Deploy normally. The GitHub Actions workflow updates `notes/` directly with Git before `docker compose up -d --build`.
 
 ## Day-to-day workflow
 
-1. Before editing shared notes on a machine, run `npm run notes:sync` if you are not sure it is current.
+1. Before editing shared notes on a machine, run `git pull --rebase --autostash` inside `notes/` if you are not sure it is current.
 2. Edit files under `notes/`.
-3. On a machine with write access, run `npm run notes:push -- "message"` or commit and push manually from inside `notes/`.
+3. On a machine with write access, use normal Git commands inside `notes/` to stage, commit, and push.
 4. If another machine also writes to notes, sync there before editing.
 
 ## Failure cases
@@ -64,6 +58,3 @@ The `notes/` directory exists but is not a valid checkout. If `NOTES_REPO_URL` i
 
 - `Permission denied (publickey)` on VPS
 The deploy key or SSH host alias is missing or incorrect.
-
-- `commit message is required`
-`notes:push` is intentionally explicit and will not create automatic commit messages.

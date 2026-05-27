@@ -32,18 +32,16 @@ Both paths are symlinks to `.opencode/skills`, so new skills should always be ad
 
 The standard setup and workflow live in `docs/notes-repo.md`.
 
-Set `NOTES_REPO_URL` in `.env`, then use these commands:
+Set `NOTES_REPO_URL` in `.env`, then initialize `notes/` with:
 
 Local can use `https://github.com/hcsum/my-agent-notes.git`.
 VPS should use the SSH host alias you configured for the deploy key, for example `git@github.com-my-agent-notes:hcsum/my-agent-notes.git`.
 If unset, the scripts default to branch `main` and remote `origin`.
 
 - `npm run notes:bootstrap` to initialize `notes/` in a standard way
-- `npm run notes:push -- "message"` to sync, commit, and push notes changes from the host
-- `npm run notes:sync` to pull the latest notes changes with `--rebase --autostash`
 
-The local OpenCode entrypoints call the internal bootstrap check automatically, and the VPS deploy workflow calls `notes:sync` before `docker compose up --build`.
+After bootstrap, work with the notes repo directly from inside `notes/` using normal Git commands.
+The local OpenCode entrypoints call the internal bootstrap check automatically, and the VPS deploy workflow updates `notes/` directly before `docker compose up --build`.
 If a machine still has a pre-migration plain `notes/` directory, the bootstrap logic renames it to `notes.pre-git-migration.<timestamp>` before cloning the private repo.
-Use `notes:push` only on machines that have write access to the private notes repo.
 
 Because `notes/` is its own repo, commit and push notes changes from inside `notes/`, not from the parent repo.

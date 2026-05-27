@@ -61,9 +61,7 @@ When NOT to use:
 - Default to wiki lookup for clearly knowledge-base-oriented questions even when the user does not explicitly say `query wiki`; keep `query wiki <question>` as a force-use-wiki override.
 - `notes/knowledge/raw/` is the immutable source layer, `notes/knowledge/wiki/` is the LLM-maintained wiki, and `notes/knowledge/schema/` defines the workflow.
 - Never modify `notes/user.md` unless the user explicitly asks you to.
-- `notes/` is a separate private Git repo. When notes need to be synced, use `npm run notes:sync`. When notes changes should be committed and pushed on a machine with write access, use `npm run notes:push -- "message"` — this is the ONLY supported path.
-- Never run ad hoc Git commands inside `./notes` (no `git add`, `git commit`, `git push`, `git config`, `git remote ...`). Never read or set up SSH keys, `.env` files, or other credentials to "make `git push` work" — the push script handles auth via the host environment.
-- If `npm run notes:push` fails because you are running inside the Docker bridge container (no host SSH keys mounted; sandbox blocks `/root/.ssh`, `/etc/ssh`, or `.env` reads), stop immediately and reply that notes push is a host-side operation. Do not request permissions for credential paths to work around the sandbox — the user will run the script on the host themselves.
+- `notes/` is a separate private Git repo. When notes need to be synced, committed, or pushed, use Git directly inside `./notes` rather than wrapper scripts.
 - Only modify `AGENTS.md` when the user wants to change durable agent behavior.
 
 ## Skill Authoring
