@@ -27,6 +27,8 @@ jobs:
             cd "${{ secrets.DEPLOY_PATH }}"
             git fetch origin main
             git reset --hard origin/main
+            git submodule sync --recursive
+            git submodule update --init --recursive --checkout --force
             bash scripts/sync-notes.sh
             export DEPLOY_COMMIT_SHA="${{ github.sha }}"
             export DEPLOY_RUN_ID="${{ github.run_id }}"
