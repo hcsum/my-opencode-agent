@@ -27,6 +27,9 @@ jobs:
             cd "${{ secrets.DEPLOY_PATH }}"
             git fetch origin main
             git reset --hard origin/main
+            if [ -d .opencode/skills/web-access ] && [ ! -e .opencode/skills/web-access/.git ]; then
+              rm -rf .opencode/skills/web-access
+            fi
             git submodule sync --recursive
             git submodule update --init --recursive --checkout --force
             bash scripts/sync-notes.sh
