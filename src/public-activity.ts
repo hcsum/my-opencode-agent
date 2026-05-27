@@ -90,8 +90,15 @@ export interface PublicCurrentState {
   summary?: string;
   updatedAt: string;
   activeCount: number;
+  stats: PublicActivityStats;
   source?: PublicSource;
   taskType?: string;
+}
+
+export interface PublicActivityStats {
+  tasksHandled: number;
+  tasksCompleted: number;
+  tasksFailed: number;
 }
 
 interface PublicActivityFile {
@@ -108,6 +115,12 @@ interface DeploymentInfo {
   actor?: string;
   deployedAt?: string;
 }
+
+const DEFAULT_STATS: PublicActivityStats = {
+  tasksHandled: 0,
+  tasksCompleted: 0,
+  tasksFailed: 0,
+};
 
 export class PublicEventPublisher {
   private readonly currentPath: string;
@@ -163,6 +176,7 @@ export class PublicEventPublisher {
   }
 
   private appendEntry(entry: PublicActivityEntry): void {
+    const stats = nextStats(this.current.stats, entry.type);
     this.events.push(entry);
     if (this.events.length > this.maxEvents) {
       this.events = this.events.slice(-this.maxEvents);
@@ -173,6 +187,7 @@ export class PublicEventPublisher {
       ...(entry.summary ? { summary: entry.summary } : {}),
       updatedAt: entry.ts,
       activeCount: this.activeRuns.size,
+      stats,
       ...(entry.source ? { source: entry.source } : {}),
       ...(entry.taskType ? { taskType: entry.taskType } : {}),
     };
@@ -325,6 +340,7 @@ export class PublicEventPublisher {
       title: "Agent idle",
       updatedAt: ts,
       activeCount: 0,
+      stats: { ...DEFAULT_STATS },
     };
   }
 
@@ -357,7 +373,7 @@ export class PublicEventPublisher {
     }
 
     if (current) {
-      this.current = current;
+      this.current = normalizeCurrentState(current);
     } else if (this.events.length > 0) {
       const last = this.events.at(-1);
       if (last) {
@@ -367,6 +383,7 @@ export class PublicEventPublisher {
           ...(last.summary ? { summary: last.summary } : {}),
           updatedAt: last.ts,
           activeCount: 0,
+          stats: deriveStatsFromEvents(this.events),
           ...(last.source ? { source: last.source } : {}),
           ...(last.taskType ? { taskType: last.taskType } : {}),
         };
@@ -517,6 +534,49 @@ function formatDuration(durationMs: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.round(seconds % 60);
   return `${minutes}m ${remainder}s`;
+}
+
+function normalizeCurrentState(current: PublicCurrentState): PublicCurrentState {
+  return {
+    ...current,
+    stats: current.stats
+      ? {
+          tasksHandled: current.stats.tasksHandled || 0,
+          tasksCompleted: current.stats.tasksCompleted || 0,
+          tasksFailed: current.stats.tasksFailed || 0,
+        }
+      : { ...DEFAULT_STATS },
+  };
+}
+
+function deriveStatsFromEvents(events: PublicActivityEntry[]): PublicActivityStats {
+  return events.reduce(
+    (stats, entry) => nextStats(stats, entry.type),
+    { ...DEFAULT_STATS },
+  );
+}
+
+function nextStats(
+  current: PublicActivityStats,
+  eventType: PublicEventType,
+): PublicActivityStats {
+  if (eventType === "task_completed") {
+    return {
+      tasksHandled: current.tasksHandled + 1,
+      tasksCompleted: current.tasksCompleted + 1,
+      tasksFailed: current.tasksFailed,
+    };
+  }
+
+  if (eventType === "task_failed") {
+    return {
+      tasksHandled: current.tasksHandled + 1,
+      tasksCompleted: current.tasksCompleted,
+      tasksFailed: current.tasksFailed + 1,
+    };
+  }
+
+  return current;
 }
 
 function buildDeploymentFingerprint(info: DeploymentInfo): string | undefined {
