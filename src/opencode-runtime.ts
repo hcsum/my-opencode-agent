@@ -36,6 +36,7 @@ const STREAM_IDLE_TIMEOUT_MS = 45000;
 const WEB_ACCESS_HANDOFF_TIMEOUT_MS = 75 * 1000;
 const DIAGNOSTIC_LOG_INTERVAL_MS = 30 * 1000;
 const ASSISTANT_SHELL_STALL_TIMEOUT_MS = 90 * 1000;
+const BUSY_MESSAGE_SYNC_INTERVAL_MS = 15 * 1000;
 const MAX_STALL_RECOVERY_ATTEMPTS = 1;
 
 export type PermissionResponse = "once" | "always" | "reject";
@@ -122,6 +123,8 @@ interface ActiveRun {
   pendingAssistantShellMessageId?: string;
   pendingAssistantShellCreatedAtMs?: number;
   lastPartMessageId?: string;
+  lastPartFingerprint?: string;
+  lastMessageSyncAtMs: number;
 }
 
 interface StreamEventPayload {
@@ -340,6 +343,7 @@ export class OpencodeRuntime {
       lastProgressSummary: "Restored active run.",
       lastDiagnosticAtMs: 0,
       recoveryAttempts: 0,
+      lastMessageSyncAtMs: 0,
     };
 
     this.activeRuns.set(meta.threadId, run);
@@ -469,6 +473,7 @@ export class OpencodeRuntime {
       const run = this.getRunForSession(props.sessionID);
       if (run) {
         run.lastPartMessageId = props.part.messageID;
+        run.lastPartFingerprint = getPartFingerprint(props.part);
         if (run.pendingAssistantShellMessageId === props.part.messageID) {
           this.clearPendingAssistantShell(run);
         }
@@ -566,6 +571,13 @@ export class OpencodeRuntime {
       const sessionStatus = statusMap?.[run.sessionId]?.type;
       this.maybeLogDiagnostic(run, now, sessionStatus);
 
+      if (shouldSyncBusyMessages(run, now, sessionStatus)) {
+        const completed = await this.syncMessages(run);
+        if (completed) {
+          continue;
+        }
+      }
+
       if (shouldRecoverAssistantShell(run, now, sessionStatus)) {
         await this.recoverRunFromStall(
           run,
@@ -601,6 +613,60 @@ export class OpencodeRuntime {
 
       await this.checkMessages(run);
     }
+  }
+
+  private async syncMessages(run: ActiveRun): Promise<boolean> {
+    run.lastMessageSyncAtMs = Date.now();
+    const messages = await this.unwrap<Array<{ info: Message; parts: Part[] }>>(
+      this.client.session.messages({ sessionID: run.sessionId }),
+    ).catch((error) => {
+      void this.handleRecoverableRunError(run, error);
+      return undefined;
+    });
+
+    if (!messages) return false;
+
+    const latest = findLatestCompletedAssistantMessage(messages, run.startedAtMs);
+    if (latest) {
+      this.noteProgress(run, "Recovered terminal assistant message from message sync.");
+      this.trackAssistant(run, latest.info);
+      this.clearPendingAssistantShell(run);
+      await this.completeRun(run, collectMessageText(latest.parts), latest.info.error);
+      return true;
+    }
+
+    const latestAssistant = findLatestAssistantMessage(messages, run.startedAtMs);
+    if (latestAssistant) {
+      const previousAssistantId = run.latestAssistantMessageId;
+      this.trackAssistant(run, latestAssistant.info);
+      this.trackAssistantShell(run, latestAssistant.info);
+      if (latestAssistant.parts.length > 0 && run.pendingAssistantShellMessageId === latestAssistant.info.id) {
+        this.clearPendingAssistantShell(run);
+      }
+      if (latestAssistant.info.id !== previousAssistantId) {
+        this.noteProgress(run, "Recovered assistant progress from message sync.");
+      }
+    }
+
+    const latestPart = findLatestAssistantPart(messages, run.startedAtMs);
+    if (!latestPart) return false;
+
+    const fingerprint = getPartFingerprint(latestPart);
+    if (fingerprint === run.lastPartFingerprint) {
+      return false;
+    }
+
+    run.lastPartFingerprint = fingerprint;
+    run.lastPartMessageId = latestPart.messageID;
+    if (run.pendingAssistantShellMessageId === latestPart.messageID) {
+      this.clearPendingAssistantShell(run);
+    }
+    this.noteProgress(
+      run,
+      `Recovered progress from message sync: ${latestPart.type}.`,
+    );
+    this.logProgressPart(run, latestPart as unknown as ToolPartEvent | TextPartEvent);
+    return false;
   }
 
   private async checkMessages(run: ActiveRun): Promise<void> {
@@ -807,6 +873,8 @@ export class OpencodeRuntime {
       run.latestAssistantMessageId = undefined;
       run.latestAssistantCreatedAt = undefined;
       run.lastPartMessageId = undefined;
+      run.lastPartFingerprint = undefined;
+      run.lastMessageSyncAtMs = 0;
       run.webAccessLoadedAtMs = undefined;
       this.clearPendingAssistantShell(run);
       this.sessionToThread.set(sessionId, run.threadId);
@@ -1003,6 +1071,57 @@ function findLatestCompletedAssistantMessage(
   })[0];
 }
 
+function findLatestAssistantMessage(
+  messages: Array<{ info: Message; parts: Part[] }>,
+  startedAtMs: number,
+): { info: AssistantMessage; parts: Part[] } | undefined {
+  const candidates = messages.filter((entry) => {
+    if (entry.info.role !== "assistant") return false;
+    return entry.info.time.created >= startedAtMs;
+  }) as Array<{ info: AssistantMessage; parts: Part[] }>;
+
+  if (candidates.length === 0) return undefined;
+
+  return candidates.sort((a, b) => {
+    const aTime = a.info.time.completed || a.info.time.created;
+    const bTime = b.info.time.completed || b.info.time.created;
+    return bTime - aTime;
+  })[0];
+}
+
+function findLatestAssistantPart(
+  messages: Array<{ info: Message; parts: Part[] }>,
+  startedAtMs: number,
+): Part | undefined {
+  const assistantParts = messages.flatMap((entry) => {
+    if (entry.info.role !== "assistant") return [];
+    if (entry.info.time.created < startedAtMs) return [];
+    return entry.parts;
+  });
+
+  if (assistantParts.length === 0) return undefined;
+
+  return assistantParts.sort((a, b) => getPartTimestamp(b) - getPartTimestamp(a))[0];
+}
+
+function getPartTimestamp(part: Part): number {
+  const withTime = part as Part & {
+    time?: {
+      updated?: number;
+      created?: number;
+    };
+  };
+  return withTime.time?.updated || withTime.time?.created || 0;
+}
+
+function getPartFingerprint(part: Part): string {
+  const withId = part as Part & { id?: string };
+  if (typeof withId.id === "string" && withId.id.trim()) {
+    return withId.id;
+  }
+  return `${part.messageID}:${part.type}:${getPartTimestamp(part)}`;
+}
+
 function buildPermissionTitle(permission: PermissionRequest): string {
   const metadataTitle = permission.metadata?.title;
   return typeof metadataTitle === "string" && metadataTitle.trim()
@@ -1113,6 +1232,16 @@ function shouldRecoverAssistantShell(
     return false;
   }
   return now - run.pendingAssistantShellCreatedAtMs > ASSISTANT_SHELL_STALL_TIMEOUT_MS;
+}
+
+function shouldSyncBusyMessages(
+  run: ActiveRun,
+  now: number,
+  sessionStatus: string | undefined,
+): boolean {
+  if (sessionStatus !== "busy") return false;
+  if (now - run.lastProgressAtMs < BUSY_MESSAGE_SYNC_INTERVAL_MS) return false;
+  return now - run.lastMessageSyncAtMs >= BUSY_MESSAGE_SYNC_INTERVAL_MS;
 }
 
 function buildAssistantShellStallMessage(
