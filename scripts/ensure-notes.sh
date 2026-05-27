@@ -19,12 +19,25 @@ if command -v git >/dev/null 2>&1; then
   HAS_GIT=1
 fi
 
+mark_notes_safe_directory() {
+  if [[ "$HAS_GIT" -eq 0 ]]; then
+    return
+  fi
+
+  if git config --global --get-all safe.directory 2>/dev/null | grep -Fx -- "$NOTES_DIR" >/dev/null; then
+    return
+  fi
+
+  git config --global --add safe.directory "$NOTES_DIR"
+}
+
 if [[ -d "$NOTES_DIR/.git" ]]; then
   if [[ "$HAS_GIT" -eq 0 ]]; then
     echo "[notes] git is unavailable; using existing checkout at $NOTES_DIR"
     exit 0
   fi
 
+  mark_notes_safe_directory
   git -C "$NOTES_DIR" rev-parse --is-inside-work-tree >/dev/null
   if [[ -n "$NOTES_REPO_URL" ]]; then
     if git -C "$NOTES_DIR" remote get-url "$NOTES_REPO_REMOTE" >/dev/null 2>&1; then
@@ -64,3 +77,4 @@ fi
 
 echo "[notes] cloning $NOTES_REPO_URL into $NOTES_DIR"
 git clone --branch "$NOTES_REPO_BRANCH" "$NOTES_REPO_URL" "$NOTES_DIR"
+mark_notes_safe_directory
