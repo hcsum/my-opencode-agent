@@ -180,6 +180,10 @@ export class OpencodeRuntime {
 
     const startedAtMs = Date.now();
     const sessionId = await this.getFreshSessionId(request);
+    // The email subject often carries the actual task while the body holds
+    // refinements (or is empty). Fold the subject into the prompt so the model
+    // sees both; otherwise it only ever receives the body and misses the ask.
+    const promptText = composeRunPrompt(request);
     const meta: ThreadRunRecord = {
       threadId: request.threadId,
       sessionKey: request.sessionKey,
@@ -189,7 +193,7 @@ export class OpencodeRuntime {
       senderName: request.senderName,
       subject: request.subject,
       rfcMessageId: request.rfcMessageId,
-      lastUserText: request.textBody,
+      lastUserText: promptText,
       status: "running",
       lastError: "",
       startedAtMs,
@@ -204,7 +208,7 @@ export class OpencodeRuntime {
 
     // promptAsync can stay open until the run finishes. Keep it in the
     // background so one slow Gmail thread does not block unrelated threads.
-    void this.launchPrompt(run, request.textBody);
+    void this.launchPrompt(run, promptText);
 
     return { started: true, status: "running" };
   }
@@ -1177,6 +1181,21 @@ function isTerminalAssistantMessage(info: AssistantMessage): boolean {
   if (info.error) return true;
   if (!info.time.completed) return false;
   return info.finish !== undefined && TERMINAL_FINISH_REASONS.has(info.finish);
+}
+
+// Build the text dispatched to the model from an inbound request. Email subject
+// lines frequently hold the real task, so prepend the subject to the body.
+// Scheduled tasks already carry a fully self-contained prompt in textBody and a
+// short label as their subject, so they are passed through untouched.
+function composeRunPrompt(request: GmailRunRequest): string {
+  if (request.threadId.startsWith("scheduled-task:")) {
+    return request.textBody;
+  }
+  const subject = request.subject?.trim() ?? "";
+  const body = request.textBody?.trim() ?? "";
+  if (!subject) return request.textBody;
+  if (!body) return `Subject: ${subject}`;
+  return `Subject: ${subject}\n\n${body}`;
 }
 
 function buildPublicTaskFromMeta(meta: ThreadRunRecord): PublicTaskContext {
