@@ -50,6 +50,18 @@ export interface ThreadRunRecord {
   updatedAtMs: number;
 }
 
+export interface OutboundEmailRecord {
+  deliveryKind: "thread_reply" | "scheduled_result";
+  threadId: string;
+  gmailThreadId: string;
+  gmailMessageId: string;
+  recipientEmail: string;
+  subject: string;
+  replyToRfcMessageId: string;
+  status: "sent" | "failed";
+  error: string;
+}
+
 export function initDatabase(): void {
   fs.mkdirSync(DB_DIR, { recursive: true });
   db = new BetterSqlite3(DB_PATH);
@@ -110,6 +122,32 @@ export function markProcessed(
   ).run(gmailMessageId, threadId, subject, sender);
 
   releaseClaim(gmailMessageId);
+}
+
+export function recordOutboundEmail(email: OutboundEmailRecord): void {
+  db.prepare(
+    `INSERT INTO outbound_emails (
+       delivery_kind,
+       thread_id,
+       gmail_thread_id,
+       gmail_message_id,
+       recipient_email,
+       subject,
+       reply_to_rfc_message_id,
+       status,
+       error
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    email.deliveryKind,
+    email.threadId,
+    email.gmailThreadId,
+    email.gmailMessageId,
+    email.recipientEmail,
+    email.subject,
+    email.replyToRfcMessageId,
+    email.status,
+    email.error,
+  );
 }
 
 export function getPendingPermission(
@@ -514,6 +552,20 @@ function createSchema(): void {
     CREATE TABLE IF NOT EXISTS message_claims (
       gmail_message_id TEXT PRIMARY KEY,
       claimed_at_ms INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS outbound_emails (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      delivery_kind TEXT NOT NULL,
+      thread_id TEXT NOT NULL DEFAULT '',
+      gmail_thread_id TEXT NOT NULL DEFAULT '',
+      gmail_message_id TEXT NOT NULL DEFAULT '',
+      recipient_email TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL DEFAULT '',
+      reply_to_rfc_message_id TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS workflow_jobs (

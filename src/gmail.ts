@@ -16,6 +16,7 @@ import {
   isProcessed,
   listActiveThreadRuns,
   markProcessed,
+  recordOutboundEmail,
   refreshClaim,
   releaseClaim,
   resetThreadFailures,
@@ -609,11 +610,44 @@ export class GmailBridge {
     const encoded = Buffer.from(raw).toString("base64url");
 
     try {
-      await this.gmail.users.messages.send({
+      const response = await this.gmail.users.messages.send({
         userId: "me",
         requestBody: { raw: encoded },
       });
+      const gmailMessageId = response.data.id || "";
+      recordOutboundEmail({
+        deliveryKind: "scheduled_result",
+        threadId: payload.taskId,
+        gmailThreadId: response.data.threadId || "",
+        gmailMessageId,
+        recipientEmail: recipient,
+        subject,
+        replyToRfcMessageId: "",
+        status: "sent",
+        error: "",
+      });
+      console.log(
+        `[gmail] scheduled result sent task=${payload.taskId} message=${gmailMessageId || "(missing)"} to=${recipient} subject=${subject}`,
+      );
       this.publicActivity.emit({ type: "report_delivered", task: publicTask });
+    } catch (error) {
+      const errorMessage = extractErrorMessage(error);
+      recordOutboundEmail({
+        deliveryKind: "scheduled_result",
+        threadId: payload.taskId,
+        gmailThreadId: "",
+        gmailMessageId: "",
+        recipientEmail: recipient,
+        subject,
+        replyToRfcMessageId: "",
+        status: "failed",
+        error: errorMessage,
+      });
+      console.error(
+        `[gmail] scheduled result failed task=${payload.taskId} to=${recipient} subject=${subject}`,
+        error,
+      );
+      throw error;
     } finally {
       this.publicActivity.setIdleIfNoActiveRuns();
     }
@@ -765,13 +799,48 @@ export class GmailBridge {
 
     const encoded = Buffer.from(raw).toString("base64url");
 
-    await this.gmail.users.messages.send({
-      userId: "me",
-      requestBody: {
-        raw: encoded,
+    try {
+      const response = await this.gmail.users.messages.send({
+        userId: "me",
+        requestBody: {
+          raw: encoded,
+          threadId,
+        },
+      });
+      const gmailMessageId = response.data.id || "";
+      recordOutboundEmail({
+        deliveryKind: "thread_reply",
         threadId,
-      },
-    });
+        gmailThreadId: response.data.threadId || threadId,
+        gmailMessageId,
+        recipientEmail: meta.senderEmail,
+        subject,
+        replyToRfcMessageId: meta.messageId,
+        status: "sent",
+        error: "",
+      });
+      console.log(
+        `[gmail] reply sent thread=${threadId} message=${gmailMessageId || "(missing)"} to=${meta.senderEmail} subject=${subject}`,
+      );
+    } catch (error) {
+      const errorMessage = extractErrorMessage(error);
+      recordOutboundEmail({
+        deliveryKind: "thread_reply",
+        threadId,
+        gmailThreadId: threadId,
+        gmailMessageId: "",
+        recipientEmail: meta.senderEmail,
+        subject,
+        replyToRfcMessageId: meta.messageId,
+        status: "failed",
+        error: errorMessage,
+      });
+      console.error(
+        `[gmail] reply failed thread=${threadId} to=${meta.senderEmail} subject=${subject}`,
+        error,
+      );
+      throw error;
+    }
   }
 
   private async markRead(messageId: string): Promise<void> {
@@ -1052,6 +1121,11 @@ function stripQuotedReply(body: string): string {
   }
 
   return kept.join("\n").trim();
+}
+
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function isReplyHeader(line: string): boolean {
