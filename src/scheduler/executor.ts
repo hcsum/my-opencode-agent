@@ -7,7 +7,13 @@ import {
 } from "../public-activity.js";
 import type { SerialQueue } from "../queue.js";
 import type { AppConfig } from "../types.js";
+import { getRecentReports } from "./store.js";
 import type { ScheduledTask } from "./types.js";
+
+// How many past outputs of the same task to replay into the fire-time prompt,
+// and a per-report cap so two large prior reports can't blow up the context.
+const PRIOR_REPORT_COUNT = 2;
+const PRIOR_REPORT_MAX_CHARS = 12000;
 
 export interface ExecutorDeps {
   config: AppConfig;
@@ -78,7 +84,7 @@ export class ScheduledTaskExecutor {
       senderName: "Scheduler",
       subject: task.summary,
       rfcMessageId: "",
-      textBody: task.prompt,
+      textBody: this.composePrompt(task),
       timestamp: new Date(fireTime),
       sessionKey: `scheduled-task:${task.id}`,
       sessionTitle: `Scheduled: ${task.summary}`,
@@ -89,6 +95,38 @@ export class ScheduledTaskExecutor {
         textBody: task.prompt,
       }),
     };
+  }
+
+  // Prepend the task's most recent prior outputs to the prompt so the model can
+  // see what it produced on earlier fires — enabling it to lead with what
+  // changed and avoid repeating itself. Returns the bare prompt when there is no
+  // history yet (e.g. a one-off task or the very first cron fire).
+  private composePrompt(task: ScheduledTask): string {
+    const priors = getRecentReports(task.id, PRIOR_REPORT_COUNT);
+    if (priors.length === 0) return task.prompt;
+
+    const blocks = priors
+      .map((report) => {
+        const body =
+          report.body.length > PRIOR_REPORT_MAX_CHARS
+            ? `${report.body.slice(0, PRIOR_REPORT_MAX_CHARS)}\n…(truncated)`
+            : report.body;
+        return `--- Previous output (${report.fireTime}) ---\n${body}`;
+      })
+      .join("\n\n");
+
+    return [
+      "<prior_runs>",
+      "Below are your most recent previous outputs for this same scheduled task, oldest first.",
+      "Use them for continuity: lead with what has changed since then, and do not re-explain stories or items already covered unless there is a genuine new development.",
+      "",
+      blocks,
+      "</prior_runs>",
+      "",
+      "<current_request>",
+      task.prompt,
+      "</current_request>",
+    ].join("\n");
   }
 
   private buildRuntimeCallbacks(

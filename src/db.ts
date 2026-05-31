@@ -696,7 +696,19 @@ function createSchema(): void {
       run_count INTEGER NOT NULL DEFAULT 0,
       last_status TEXT NOT NULL DEFAULT 'idle' CHECK(last_status IN ('idle','running','success','error')),
       last_error TEXT
-    )
+    );
+
+    CREATE TABLE IF NOT EXISTS scheduled_report_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      fire_time TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scheduled_report_history_task
+      ON scheduled_report_history(task_id, id DESC);
   `);
 }
 

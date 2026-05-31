@@ -8,6 +8,7 @@ import {
   markRunning,
   markSuccess,
   reapInterruptedRuns,
+  recordReportHistory,
   setNextRunAt,
 } from "./store.js";
 import type { ScheduledTask } from "./types.js";
@@ -197,6 +198,15 @@ export class SchedulerRuntime {
       if (next) this.scheduleTimer(task.id, next);
       return;
     }
+
+    // Success: persist the final output so a later fire of this same task can be
+    // handed its own recent history (continuity / de-dup across runs).
+    recordReportHistory({
+      taskId: task.id,
+      fireTime,
+      summary: task.summary,
+      body: text,
+    });
 
     if (task.kind === "once") {
       markSuccess(task.id, null);

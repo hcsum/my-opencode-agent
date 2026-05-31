@@ -176,6 +176,76 @@ export function markError(
     .run(errorMessage, nextRunAt, id);
 }
 
+export interface ReportHistoryEntry {
+  fireTime: string;
+  summary: string;
+  body: string;
+}
+
+// How many past outputs to retain per task. The executor replays the last 2
+// into each fire (see PRIOR_REPORT_COUNT), so only those need to be kept; older
+// rows are pruned on every successful run.
+const REPORT_HISTORY_KEEP_PER_TASK = 2;
+
+// Persist a successful scheduled run's final output so a later fire of the same
+// task can be handed its own recent history (see executor.composePrompt). Old
+// rows beyond the retention window are pruned in the same transaction.
+export function recordReportHistory(input: {
+  taskId: string;
+  fireTime: string;
+  summary: string;
+  body: string;
+}): void {
+  const db = getDatabase();
+  const insert = db.prepare(
+    `INSERT INTO scheduled_report_history (task_id, fire_time, summary, body)
+       VALUES (?, ?, ?, ?)`,
+  );
+  const prune = db.prepare(
+    `DELETE FROM scheduled_report_history
+       WHERE task_id = ?
+         AND id NOT IN (
+           SELECT id FROM scheduled_report_history
+             WHERE task_id = ?
+             ORDER BY id DESC
+             LIMIT ?
+         )`,
+  );
+  db.transaction(() => {
+    insert.run(input.taskId, input.fireTime, input.summary, input.body);
+    prune.run(input.taskId, input.taskId, REPORT_HISTORY_KEEP_PER_TASK);
+  })();
+}
+
+// Most recent outputs for a task, returned oldest-first so they can be replayed
+// to the model in chronological order.
+export function getRecentReports(
+  taskId: string,
+  limit: number,
+): ReportHistoryEntry[] {
+  if (limit <= 0) return [];
+  const rows = getDatabase()
+    .prepare(
+      `SELECT fire_time, summary, body
+         FROM scheduled_report_history
+         WHERE task_id = ?
+         ORDER BY id DESC
+         LIMIT ?`,
+    )
+    .all(taskId, limit) as Array<{
+    fire_time: string;
+    summary: string;
+    body: string;
+  }>;
+  return rows
+    .map((row) => ({
+      fireTime: row.fire_time,
+      summary: row.summary,
+      body: row.body,
+    }))
+    .reverse();
+}
+
 // Boot-time recovery: any task left in 'running' was interrupted by a crash.
 export function reapInterruptedRuns(): void {
   getDatabase()
