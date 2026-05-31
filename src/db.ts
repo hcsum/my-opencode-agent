@@ -62,6 +62,11 @@ export interface OutboundEmailRecord {
   error: string;
 }
 
+export interface ThreadSessionLink {
+  sessionKey: string;
+  sessionTitle: string;
+}
+
 export function initDatabase(): void {
   fs.mkdirSync(DB_DIR, { recursive: true });
   db = new BetterSqlite3(DB_PATH);
@@ -148,6 +153,50 @@ export function recordOutboundEmail(email: OutboundEmailRecord): void {
     email.status,
     email.error,
   );
+}
+
+// Bind an outbound Gmail thread to an OpenCode sessionKey so a later inbound
+// reply on that thread continues the same session instead of spawning a fresh
+// `gmail:<threadId>` one. Used to make scheduled-result emails behave like a
+// user-triggered thread once the user replies.
+export function upsertThreadSessionLink(params: {
+  gmailThreadId: string;
+  sessionKey: string;
+  sessionTitle: string;
+}): void {
+  db.prepare(
+    `INSERT INTO thread_session_links (
+       gmail_thread_id,
+       session_key,
+       session_title,
+       created_at
+     ) VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(gmail_thread_id) DO UPDATE SET
+       session_key = excluded.session_key,
+       session_title = excluded.session_title,
+       created_at = datetime('now')`,
+  ).run(params.gmailThreadId, params.sessionKey, params.sessionTitle);
+}
+
+export function getThreadSessionLink(
+  gmailThreadId: string,
+): ThreadSessionLink | undefined {
+  const row = db
+    .prepare(
+      `SELECT session_key, session_title
+       FROM thread_session_links
+       WHERE gmail_thread_id = ?`,
+    )
+    .get(gmailThreadId) as
+    | { session_key: string; session_title: string }
+    | undefined;
+
+  if (!row) return undefined;
+
+  return {
+    sessionKey: row.session_key,
+    sessionTitle: row.session_title,
+  };
 }
 
 export function getPendingPermission(
@@ -623,6 +672,13 @@ function createSchema(): void {
       thread_id TEXT PRIMARY KEY,
       failure_count INTEGER NOT NULL DEFAULT 0,
       last_failed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS thread_session_links (
+      gmail_thread_id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL,
+      session_title TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (

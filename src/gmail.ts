@@ -12,6 +12,7 @@ import {
   clearPendingQuestion,
   getPendingPermission,
   getPendingQuestion,
+  getThreadSessionLink,
   incrementThreadFailures,
   isProcessed,
   listActiveThreadRuns,
@@ -21,6 +22,7 @@ import {
   releaseClaim,
   resetThreadFailures,
   tryClaimMessage,
+  upsertThreadSessionLink,
 } from "./db.js";
 import type {
   PendingPermissionRecord,
@@ -314,6 +316,14 @@ export class GmailBridge {
       );
       this.publicActivity.emit({ type: "task_received", task: publicTask });
 
+      // A scheduled-result email records a link from its Gmail thread back to
+      // the scheduled session. When the user replies on that thread, reuse the
+      // bound sessionKey so the conversation continues the same OpenCode
+      // session instead of starting a fresh gmail:<threadId> one.
+      const sessionLink = getThreadSessionLink(threadId);
+      const sessionKey = sessionLink?.sessionKey || `gmail:${threadId}`;
+      const sessionTitle = sessionLink?.sessionTitle || `Gmail ${subject}`;
+
       const queuedAt = Date.now();
       const result = workflowCommand
         ? await this.workflow.run({
@@ -346,8 +356,8 @@ export class GmailBridge {
                   timestamp: new Date(
                     parseInt(message.internalDate || String(Date.now()), 10),
                   ),
-                  sessionKey: `gmail:${threadId}`,
-                  sessionTitle: `Gmail ${subject}`,
+                  sessionKey,
+                  sessionTitle,
                   publicTask: ensuredPublicTask,
                 },
                 this.buildRuntimeCallbacks(threadId),
@@ -385,7 +395,7 @@ export class GmailBridge {
         `[gmail] thread ${threadId} has failed ${failures} time(s) consecutively`,
       );
       if (failures >= 2) {
-        await this.opencode.invalidateSession(`gmail:${threadId}`);
+        await this.opencode.invalidateSession(this.sessionKeyForThread(threadId));
       }
       if (publicTask) {
         this.publicActivity.emit({
@@ -590,6 +600,10 @@ export class GmailBridge {
     const subject = `${prefix}${payload.summary} — ${payload.fireTime}`;
     const fromAddress =
       this.userEmail || this.getAgentInboxAddress() || recipient;
+    // Route replies to the agent inbox so the poller picks them up — without a
+    // Reply-To the user's reply would go back to the sending account and never
+    // be ingested as a follow-up task.
+    const replyToAddress = this.getAgentInboxAddress();
     const body = [
       payload.body,
       "",
@@ -601,6 +615,7 @@ export class GmailBridge {
       headers: [
         `To: ${recipient}`,
         `From: ${fromAddress}`,
+        ...(replyToAddress ? [`Reply-To: ${replyToAddress}`] : []),
         `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
       ],
       textBody: body,
@@ -615,10 +630,11 @@ export class GmailBridge {
         requestBody: { raw: encoded },
       });
       const gmailMessageId = response.data.id || "";
+      const gmailThreadId = response.data.threadId || "";
       recordOutboundEmail({
         deliveryKind: "scheduled_result",
         threadId: payload.taskId,
-        gmailThreadId: response.data.threadId || "",
+        gmailThreadId,
         gmailMessageId,
         recipientEmail: recipient,
         subject,
@@ -626,8 +642,18 @@ export class GmailBridge {
         status: "sent",
         error: "",
       });
+      // Bind this delivery thread to the task's session so a reply continues
+      // the same OpenCode session as the scheduled run, with full interactive
+      // support — i.e. it behaves like a user-triggered thread from here on.
+      if (gmailThreadId) {
+        upsertThreadSessionLink({
+          gmailThreadId,
+          sessionKey: `scheduled-task:${payload.taskId}`,
+          sessionTitle: `Scheduled: ${payload.summary}`,
+        });
+      }
       console.log(
-        `[gmail] scheduled result sent task=${payload.taskId} message=${gmailMessageId || "(missing)"} to=${recipient} subject=${subject}`,
+        `[gmail] scheduled result sent task=${payload.taskId} message=${gmailMessageId || "(missing)"} thread=${gmailThreadId || "(missing)"} to=${recipient} subject=${subject}`,
       );
       this.publicActivity.emit({ type: "report_delivered", task: publicTask });
     } catch (error) {
@@ -651,6 +677,13 @@ export class GmailBridge {
     } finally {
       this.publicActivity.setIdleIfNoActiveRuns();
     }
+  }
+
+  // The OpenCode sessionKey an inbound thread maps to. Defaults to the
+  // per-thread gmail key, but follows a recorded link (e.g. a scheduled-result
+  // thread) so failure recovery invalidates the session actually in use.
+  private sessionKeyForThread(threadId: string): string {
+    return getThreadSessionLink(threadId)?.sessionKey || `gmail:${threadId}`;
   }
 
   private getAgentInboxAddress(): string | undefined {
@@ -692,7 +725,7 @@ export class GmailBridge {
       onFailed: async (error) => {
         const failures = incrementThreadFailures(threadId);
         if (failures >= 2) {
-          await this.opencode.invalidateSession(`gmail:${threadId}`);
+          await this.opencode.invalidateSession(this.sessionKeyForThread(threadId));
         }
         await this.sendReply(threadId, buildFailureReply(error));
         const publicTask = this.publicTasks.get(threadId);
