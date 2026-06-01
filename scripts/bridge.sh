@@ -12,4 +12,12 @@ fi
 
 bash "$ROOT_DIR/scripts/ensure-notes.sh"
 
-exec npx tsx src/index.ts "$@"
+# Run tsx directly (no npx layer) so SIGTERM from the supervisor reaches tsx,
+# which forwards it to the Node process running the bridge — letting it drain
+# the in-flight task gracefully instead of being killed.
+TSX_BIN="$ROOT_DIR/node_modules/.bin/tsx"
+if [[ -x "$TSX_BIN" ]]; then
+  exec "$TSX_BIN" src/index.ts "$@"
+else
+  exec npx tsx src/index.ts "$@"
+fi

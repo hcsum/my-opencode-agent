@@ -6,11 +6,29 @@ import type {
 export class SerialQueue {
   private readonly jobs: Array<() => Promise<void>> = [];
   private running = false;
+  private idleWaiters: Array<() => void> = [];
 
   constructor(private readonly publicActivity?: PublicEventPublisher) {}
 
   get size(): number {
     return this.jobs.length;
+  }
+
+  // True when nothing is executing and nothing is queued. Each in-flight job
+  // (Gmail or scheduler) holds the queue open via lease.wait() until the
+  // underlying OpenCode run actually completes, so an idle queue means every
+  // dispatched LLM run has finished — the signal graceful shutdown waits on.
+  get isIdle(): boolean {
+    return !this.running && this.jobs.length === 0;
+  }
+
+  // Resolves the next time the queue reaches an idle state (immediately if it
+  // already is). Used by the shutdown path to let the current task finish.
+  whenIdle(): Promise<void> {
+    if (this.isIdle) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.idleWaiters.push(resolve);
+    });
   }
 
   enqueue<T>(
@@ -57,6 +75,11 @@ export class SerialQueue {
       }
     } finally {
       this.running = false;
+      if (this.jobs.length === 0 && this.idleWaiters.length > 0) {
+        const waiters = this.idleWaiters;
+        this.idleWaiters = [];
+        for (const resolve of waiters) resolve();
+      }
     }
   }
 }

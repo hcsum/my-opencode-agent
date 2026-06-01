@@ -38,9 +38,10 @@ async function main(): Promise<void> {
 
   const launches: Promise<void>[] = [];
   let scheduler: Scheduler | undefined;
+  let bridge: GmailBridge | undefined;
 
   if (config.agentInboxEmail) {
-    const bridge = new GmailBridge(
+    bridge = new GmailBridge(
       config,
       opencode,
       queue,
@@ -73,17 +74,66 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  const shutdown = () => {
+  // Upper bound on how long we let in-flight work drain before exiting anyway.
+  // Must stay below docker-compose's stop_grace_period so we exit cleanly
+  // rather than being SIGKILLed mid-drain.
+  const drainTimeoutMs = Number(process.env.SHUTDOWN_DRAIN_TIMEOUT_MS) || 240_000;
+  let shuttingDown = false;
+
+  const gracefulShutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[app] ${signal} received — starting graceful shutdown`);
+
+    // 1) Stop intake: no new emails claimed, no new scheduled fires. Clients
+    //    stay alive so in-flight tasks can still reply / deliver results.
+    bridge?.beginShutdown();
+    scheduler?.beginShutdown();
+
+    // 2) Let the current task finish and deliver. The serial queue stays busy
+    //    (via lease.wait) until the OpenCode run completes; the per-component
+    //    waiters then cover the reply / result-email continuations.
+    const drain = (async () => {
+      await queue.whenIdle();
+      await scheduler?.waitForInFlight();
+      await bridge?.waitForInFlight();
+      await queue.whenIdle();
+    })();
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = await Promise.race([
+      drain.then(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), drainTimeoutMs);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+
+    if (timedOut) {
+      console.warn(
+        `[app] drain exceeded ${drainTimeoutMs}ms — exiting with work still in flight`,
+      );
+    } else {
+      console.log("[app] in-flight work drained — exiting cleanly");
+    }
+
+    // 3) Full teardown.
+    try {
+      await scheduler?.stop();
+      await bridge?.stop();
+    } catch (error) {
+      console.error("[app] error during teardown", error);
+    }
     releaseLock();
-    void scheduler?.stop();
+    process.exit(0);
   };
 
-  process.once("exit", shutdown);
+  process.once("exit", () => releaseLock());
   process.once("SIGINT", () => {
-    shutdown();
+    void gracefulShutdown("SIGINT");
   });
   process.once("SIGTERM", () => {
-    shutdown();
+    void gracefulShutdown("SIGTERM");
   });
 }
 

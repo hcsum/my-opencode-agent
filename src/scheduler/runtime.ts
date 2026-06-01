@@ -28,6 +28,10 @@ export class SchedulerRuntime {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly runningTaskIds = new Set<string>();
   private started = false;
+  private shuttingDown = false;
+  // In-flight task runs plus their result-delivery emails, so graceful
+  // shutdown can wait for a firing scheduled task to finish and deliver.
+  private readonly inFlight = new Set<Promise<void>>();
 
   constructor(private readonly deps: RuntimeDeps) {}
 
@@ -46,7 +50,26 @@ export class SchedulerRuntime {
   }
 
   async stop(): Promise<void> {
-    for (const taskId of this.timers.keys()) this.clearTimer(taskId);
+    for (const taskId of [...this.timers.keys()]) this.clearTimer(taskId);
+  }
+
+  // Cancel all pending fire timers so no new scheduled run starts, while
+  // leaving any in-flight run to complete. Call waitForInFlight() to drain.
+  beginShutdown(): void {
+    this.shuttingDown = true;
+    for (const taskId of [...this.timers.keys()]) this.clearTimer(taskId);
+  }
+
+  // Wait for any firing scheduled task — and its result email — to finish.
+  async waitForInFlight(): Promise<void> {
+    while (this.inFlight.size > 0) {
+      await Promise.allSettled([...this.inFlight]);
+    }
+  }
+
+  private trackInFlight(work: Promise<void>): void {
+    this.inFlight.add(work);
+    void work.finally(() => this.inFlight.delete(work));
   }
 
   // Cancel any existing timer for the task and re-register based on its
@@ -92,9 +115,10 @@ export class SchedulerRuntime {
   fireNow(taskId: string): boolean {
     const task = getTask(taskId);
     if (!task) return false;
+    if (this.shuttingDown) return false;
     if (this.runningTaskIds.has(taskId)) return false;
     this.clearTimer(taskId);
-    void this.runTaskNow(task);
+    this.trackInFlight(this.runTaskNow(task));
     return true;
   }
 
@@ -128,6 +152,7 @@ export class SchedulerRuntime {
   }
 
   private handleFire(taskId: string): void {
+    if (this.shuttingDown) return;
     const task = getTask(taskId);
     if (!task) return;
     if (!task.enabled) return;
@@ -148,7 +173,7 @@ export class SchedulerRuntime {
       return;
     }
 
-    void this.runTaskNow(task);
+    this.trackInFlight(this.runTaskNow(task));
   }
 
   private async runTaskNow(task: ScheduledTask): Promise<void> {
@@ -257,11 +282,15 @@ export class SchedulerRuntime {
     body: string;
     isError: boolean;
   }): void {
-    void this.deps.bridge.sendScheduledResult(payload).catch((error) => {
-      console.error(
-        `[scheduler] failed to deliver scheduled result for ${payload.taskId}`,
-        error,
-      );
-    });
+    // Tracked so a shutdown drain waits for the result email to be delivered,
+    // not just for the run to compute its output.
+    this.trackInFlight(
+      this.deps.bridge.sendScheduledResult(payload).catch((error) => {
+        console.error(
+          `[scheduler] failed to deliver scheduled result for ${payload.taskId}`,
+          error,
+        );
+      }),
+    );
   }
 }

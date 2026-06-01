@@ -19,6 +19,8 @@ export interface SchedulerDeps {
 
 export interface Scheduler {
   stop(): Promise<void>;
+  beginShutdown(): void;
+  waitForInFlight(): Promise<void>;
 }
 
 export async function launchScheduler(deps: SchedulerDeps): Promise<Scheduler> {
@@ -40,6 +42,14 @@ export async function launchScheduler(deps: SchedulerDeps): Promise<Scheduler> {
     async stop() {
       await api.stop();
       await runtime.stop();
+    },
+    beginShutdown() {
+      // Stop firing new scheduled runs. The HTTP API stays up so a draining
+      // task can still use the schedule_* tools; it is closed in stop().
+      runtime.beginShutdown();
+    },
+    async waitForInFlight() {
+      await runtime.waitForInFlight();
     },
   };
 }

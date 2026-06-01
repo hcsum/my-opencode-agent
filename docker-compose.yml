@@ -2,7 +2,13 @@ services:
   agent:
     build: .
     container_name: opencode-agent
-    command: npm run serve-and-bridge
+    # Run the supervisor as PID 1 (not via `npm run`) so Docker's SIGTERM
+    # reaches it directly and the graceful-shutdown trap fires.
+    command: ["bash", "scripts/serve-and-bridge.sh"]
+    # Give the in-flight task time to finish and deliver before SIGKILL. Must
+    # exceed SHUTDOWN_DRAIN_TIMEOUT_MS below, with headroom for the model
+    # server to stop afterward.
+    stop_grace_period: 300s
     env_file: .env
     environment:
       - OPENCODE_SERVE_PORT=4096
@@ -10,6 +16,8 @@ services:
       - BRIDGE_DISABLE_LOCK=true
       - BROWSERBASE_REGION=ap-southeast-1
       - GMAIL_NEWER_THAN=10m
+      # Upper bound on draining in-flight work on shutdown; keep < stop_grace_period.
+      - SHUTDOWN_DRAIN_TIMEOUT_MS=270000
       # Optional: override the model set in .opencode/opencode.json per-deployment
       - OPENCODE_MODEL=openai/gpt-5.4
       - DEPLOY_COMMIT_SHA=${DEPLOY_COMMIT_SHA:-}

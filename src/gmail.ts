@@ -60,6 +60,11 @@ export class GmailBridge {
   private readonly workflow: WorkflowRunner;
   private consecutiveErrors = 0;
   private userEmail = "";
+  private shuttingDown = false;
+  // Fire-and-forget processMessage() runs spawned from the poll loop. Tracked
+  // so graceful shutdown can wait for the in-flight reply + markProcessed to
+  // finish instead of being killed mid-task.
+  private readonly inFlight = new Set<Promise<void>>();
 
   constructor(
     private readonly config: AppConfig,
@@ -138,6 +143,35 @@ export class GmailBridge {
     );
   }
 
+  // Stop claiming new messages without tearing down the Gmail client, so any
+  // in-flight task can still send its reply and mark the message processed.
+  // Full teardown happens in stop() once the drain is complete.
+  beginShutdown(): void {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
+    console.log(
+      `[gmail] shutdown initiated; ${this.inFlight.size} in-flight task(s) draining`,
+    );
+  }
+
+  // Wait for every in-flight processMessage() run to settle (reply sent,
+  // message marked processed/claim released). Re-checks because a settling run
+  // could enqueue follow-on work.
+  async waitForInFlight(): Promise<void> {
+    while (this.inFlight.size > 0) {
+      await Promise.allSettled([...this.inFlight]);
+    }
+  }
+
+  private trackInFlight(work: Promise<void>): void {
+    this.inFlight.add(work);
+    void work.finally(() => this.inFlight.delete(work));
+  }
+
   async stop(): Promise<void> {
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
@@ -149,6 +183,8 @@ export class GmailBridge {
   }
 
   private schedulePoll(): void {
+    if (this.shuttingDown) return;
+
     const backoffMs =
       this.consecutiveErrors > 0
         ? Math.min(
@@ -161,13 +197,13 @@ export class GmailBridge {
       this.pollForMessages()
         .catch((err) => console.error("[gmail] poll error", err))
         .finally(() => {
-          if (this.gmail) this.schedulePoll();
+          if (this.gmail && !this.shuttingDown) this.schedulePoll();
         });
     }, backoffMs);
   }
 
   private async pollForMessages(): Promise<void> {
-    if (!this.gmail) return;
+    if (!this.gmail || this.shuttingDown) return;
 
     const inbox = this.getAgentInboxAddress();
     if (!inbox) {
@@ -199,10 +235,12 @@ export class GmailBridge {
       }
       newCount++;
       console.log(`[gmail] processing new message ${msg.id}`);
-      void this.processMessage(messageId).catch((err) => {
-        releaseClaim(messageId);
-        console.error(`[gmail] failed to process message ${messageId}`, err);
-      });
+      this.trackInFlight(
+        this.processMessage(messageId).catch((err) => {
+          releaseClaim(messageId);
+          console.error(`[gmail] failed to process message ${messageId}`, err);
+        }),
+      );
     }
 
     console.log(
