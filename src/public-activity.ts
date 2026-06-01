@@ -168,7 +168,14 @@ export class PublicEventPublisher {
     if (this.activeRuns.size > 0) return;
     const last = this.events.at(-1);
     if (last?.type === "agent_idle") {
-      this.current = this.buildIdleState(last.ts);
+      this.current = {
+        ...this.buildIdleState(last.ts),
+        // Preserve the cumulative counters; rebuilding idle state must not
+        // reset tasksHandled/tasksCompleted/tasksFailed (which would zero the
+        // counts on every restart/deploy).
+        stats: this.current.stats,
+        activeCount: this.activeRuns.size,
+      };
       this.writeSnapshot();
       return;
     }
@@ -374,6 +381,11 @@ export class PublicEventPublisher {
 
     if (current) {
       this.current = normalizeCurrentState(current);
+      // Older snapshots predate the stats field. Recover the counters from the
+      // retained event log instead of falling back to zeros.
+      if (!current.stats && this.events.length > 0) {
+        this.current.stats = deriveStatsFromEvents(this.events);
+      }
     } else if (this.events.length > 0) {
       const last = this.events.at(-1);
       if (last) {
