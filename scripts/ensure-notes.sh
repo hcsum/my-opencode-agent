@@ -13,11 +13,36 @@ fi
 NOTES_REPO_URL="${NOTES_REPO_URL:-}"
 NOTES_REPO_BRANCH="${NOTES_REPO_BRANCH:-main}"
 NOTES_REPO_REMOTE="${NOTES_REPO_REMOTE:-origin}"
+# Commit identity for the notes repo. Falls back to USER_EMAIL so a clean
+# host (e.g. the VPS Docker container) can commit without a global git config.
+NOTES_GIT_USER_NAME="${NOTES_GIT_USER_NAME:-opencode-agent}"
+NOTES_GIT_USER_EMAIL="${NOTES_GIT_USER_EMAIL:-${USER_EMAIL:-}}"
 HAS_GIT=0
 
 if command -v git >/dev/null 2>&1; then
   HAS_GIT=1
 fi
+
+ensure_notes_identity() {
+  if [[ "$HAS_GIT" -eq 0 ]]; then
+    return
+  fi
+
+  # Only set what is missing, and only at the repo level so we never clobber
+  # the host's global git identity.
+  if [[ -z "$(git -C "$NOTES_DIR" config --get user.name 2>/dev/null)" ]]; then
+    git -C "$NOTES_DIR" config user.name "$NOTES_GIT_USER_NAME"
+  fi
+
+  if [[ -z "$(git -C "$NOTES_DIR" config --get user.email 2>/dev/null)" ]]; then
+    if [[ -n "$NOTES_GIT_USER_EMAIL" ]]; then
+      git -C "$NOTES_DIR" config user.email "$NOTES_GIT_USER_EMAIL"
+    else
+      echo "[notes] warning: no notes commit identity configured." >&2
+      echo "[notes] set NOTES_GIT_USER_EMAIL (or USER_EMAIL) in .env to enable commits." >&2
+    fi
+  fi
+}
 
 mark_notes_safe_directory() {
   if [[ "$HAS_GIT" -eq 0 ]]; then
@@ -46,6 +71,7 @@ if [[ -d "$NOTES_DIR/.git" ]]; then
       git -C "$NOTES_DIR" remote add "$NOTES_REPO_REMOTE" "$NOTES_REPO_URL"
     fi
   fi
+  ensure_notes_identity
   exit 0
 fi
 
@@ -78,3 +104,4 @@ fi
 echo "[notes] cloning $NOTES_REPO_URL into $NOTES_DIR"
 git clone --branch "$NOTES_REPO_BRANCH" "$NOTES_REPO_URL" "$NOTES_DIR"
 mark_notes_safe_directory
+ensure_notes_identity
