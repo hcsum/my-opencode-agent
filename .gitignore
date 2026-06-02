@@ -6,3 +6,7 @@ dist/
 notes/
 tmp/
 signature_cache.json
+
+# Claude Code local runtime artifacts (process locks, personal settings)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
