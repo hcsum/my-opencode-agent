@@ -29,11 +29,15 @@ services:
       - ./.data:/workspace/.data
       # Keep notes as a live host repo instead of baking them into the image.
       - ./notes:/workspace/notes
-      # Gmail OAuth credentials from host
-      - ~/.gmail-mcp:/root/.gmail-mcp
-      # Reuse full host OpenCode state so server sees auth, logs, DB, and session history
-      - ~/.local/share/opencode:/root/.local/share/opencode
-      - ~/.config/opencode:/root/.config/opencode
+      # Host-side credential/state dirs. These are project-relative by default
+      # so they resolve to the SAME path no matter which user runs
+      # `docker compose` (root vs deploy). Do NOT use `~`-relative paths here:
+      # `~` expands to the running user's home, so running as root once mounts
+      # an empty /root/... and silently breaks Gmail/auth. Override via .env
+      # only when you must point at an existing location on a legacy box.
+      - ${GMAIL_MCP_DIR:-./.secrets/gmail-mcp}:/root/.gmail-mcp
+      - ${OPENCODE_SHARE_DIR:-./.secrets/opencode-share}:/root/.local/share/opencode
+      - ${OPENCODE_CONFIG_DIR:-./.secrets/opencode-config}:/root/.config/opencode
     ports:
       - "4096:4096"
     working_dir: /workspace

@@ -10,6 +10,9 @@ dist/
 logs/
 notes/
 
+# Host-side credentials/state (mounted at runtime, never baked into the image)
+.secrets/
+
 # Environment
 .env
 .env.*
