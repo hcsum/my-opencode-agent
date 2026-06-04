@@ -13,11 +13,16 @@ Produce a daily briefing in two independent rounds: a portfolio-blind news round
 
 ## Continuity (do this first)
 
-The runtime prepends your most recent previous outputs for this task inside a `<prior_runs>` block. Use it:
+The runtime prepends your most recent previous outputs for this task inside a `<prior_runs>` block. Treat it as a **hard exclusion list**, not soft guidance — repeating yesterday's articles is the main failure mode of this report.
 
-- Lead the report with what is genuinely **new or changed** since those runs.
-- Do **not** re-select or re-explain a story/development already covered, unless there is a real new update — in which case state the update in one or two lines, not a fresh full write-up.
+Before selecting anything, extract from `<prior_runs>` the set of every article **title and URL** already published. Then:
+
+- **Hard exclude (no exceptions):** never re-list an article whose title or URL already appeared in `<prior_runs>`. The same piece, the same press release, or the same information restated by another outlet all count as already-covered. Do not re-select it as a "new main story," even if it is still the biggest news of the day.
+- **Distinguish repeat from progression.** A new article on a topic you covered before is allowed **only** when it carries a genuinely new development (new decision, new number, new counterparty, new stage). When it does, write **only the delta** in one or two lines, explicitly framed as an update ("较昨日新增：…"), not a fresh full write-up. If you cannot name what is new, it is a repeat — exclude it.
+- **When in doubt, exclude.** A shorter, honest report beats padding with yesterday's stories.
 - If `<prior_runs>` is absent (first run), just produce the report normally.
+
+You will run a final dedup pass against this exclusion list before sending — see **Before sending** below.
 
 ## Round 1 — News (favorite websites), portfolio-blind
 
@@ -64,6 +69,15 @@ If little has materially changed versus the previous reports, produce a **short,
 - Do not batch multiple article links onto one line. Do not invent, reconstruct, or hand-edit URLs.
 - Keep the portfolio section separate from the news section.
 - End with a brief **待办 / todos** list of important reminders or upcoming items for the day if any are available.
+
+## Before sending (dedup gate)
+
+Run this check on the finished draft before you send it:
+
+- Compare every article title and URL in the draft against the exclusion list you extracted from `<prior_runs>`.
+- If any selected article matches a prior title or URL and is **not** framed as a one-or-two-line "较昨日新增" delta, remove it and either replace it with a genuinely new story or leave the report shorter.
+- Confirm no Round 1 article duplicates another within the same run.
+- Only send once the draft contains no already-covered full write-ups.
 
 ## Scheduling
 
