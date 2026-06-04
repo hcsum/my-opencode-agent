@@ -13,6 +13,14 @@ fi
 NOTES_REPO_URL="${NOTES_REPO_URL:-}"
 NOTES_REPO_BRANCH="${NOTES_REPO_BRANCH:-main}"
 NOTES_REPO_REMOTE="${NOTES_REPO_REMOTE:-origin}"
+# Optional HTTPS token (GitHub PAT). When set, the notes remote is switched to
+# HTTPS and authenticated with this token instead of an SSH key/host alias, so
+# auth works identically in the container, on the host, and in CI — no ssh
+# client, key files, or per-user ssh config required.
+NOTES_REPO_TOKEN="${NOTES_REPO_TOKEN:-}"
+# Credential helper that reads the token from the environment at call time, so
+# the secret is never written into .git/config or any tracked file.
+NOTES_CRED_HELPER='!f() { echo username=x-access-token; echo "password=${NOTES_REPO_TOKEN}"; }; f'
 # Commit identity for the notes repo. Falls back to USER_EMAIL so a clean
 # host (e.g. the VPS Docker container) can commit without a global git config.
 NOTES_GIT_USER_NAME="${NOTES_GIT_USER_NAME:-opencode-agent}"
@@ -56,6 +64,34 @@ mark_notes_safe_directory() {
   git config --global --add safe.directory "$NOTES_DIR"
 }
 
+# Derive https://github.com/<owner>/<repo>.git from NOTES_REPO_URL in any form
+# (ssh, ssh host-alias, or https).
+notes_https_url() {
+  local url="$1" path
+  case "$url" in
+    https://*) path="${url#https://}"; path="${path#*/}" ;;
+    *:*)       path="${url##*:}" ;;
+    *)         path="$url" ;;
+  esac
+  printf 'https://github.com/%s' "$path"
+}
+
+# When a token is configured, point the remote at HTTPS and wire up the
+# env-reading credential helper. Returns non-zero when no token is set so
+# callers fall back to the SSH/alias remote.
+configure_notes_token_auth() {
+  [[ "$HAS_GIT" -eq 1 ]] || return 1
+  [[ -n "$NOTES_REPO_TOKEN" && -n "$NOTES_REPO_URL" ]] || return 1
+  local https_url
+  https_url="$(notes_https_url "$NOTES_REPO_URL")"
+  if git -C "$NOTES_DIR" remote get-url "$NOTES_REPO_REMOTE" >/dev/null 2>&1; then
+    git -C "$NOTES_DIR" remote set-url "$NOTES_REPO_REMOTE" "$https_url"
+  else
+    git -C "$NOTES_DIR" remote add "$NOTES_REPO_REMOTE" "$https_url"
+  fi
+  git -C "$NOTES_DIR" config credential.helper "$NOTES_CRED_HELPER"
+}
+
 if [[ -d "$NOTES_DIR/.git" ]]; then
   if [[ "$HAS_GIT" -eq 0 ]]; then
     echo "[notes] git is unavailable; using existing checkout at $NOTES_DIR"
@@ -64,11 +100,13 @@ if [[ -d "$NOTES_DIR/.git" ]]; then
 
   mark_notes_safe_directory
   git -C "$NOTES_DIR" rev-parse --is-inside-work-tree >/dev/null
-  if [[ -n "$NOTES_REPO_URL" ]]; then
-    if git -C "$NOTES_DIR" remote get-url "$NOTES_REPO_REMOTE" >/dev/null 2>&1; then
-      git -C "$NOTES_DIR" remote set-url "$NOTES_REPO_REMOTE" "$NOTES_REPO_URL"
-    else
-      git -C "$NOTES_DIR" remote add "$NOTES_REPO_REMOTE" "$NOTES_REPO_URL"
+  if ! configure_notes_token_auth; then
+    if [[ -n "$NOTES_REPO_URL" ]]; then
+      if git -C "$NOTES_DIR" remote get-url "$NOTES_REPO_REMOTE" >/dev/null 2>&1; then
+        git -C "$NOTES_DIR" remote set-url "$NOTES_REPO_REMOTE" "$NOTES_REPO_URL"
+      else
+        git -C "$NOTES_DIR" remote add "$NOTES_REPO_REMOTE" "$NOTES_REPO_URL"
+      fi
     fi
   fi
   ensure_notes_identity
@@ -101,7 +139,15 @@ if [[ -z "$NOTES_REPO_URL" ]]; then
   exit 1
 fi
 
-echo "[notes] cloning $NOTES_REPO_URL into $NOTES_DIR"
-git clone --branch "$NOTES_REPO_BRANCH" "$NOTES_REPO_URL" "$NOTES_DIR"
+if [[ -n "$NOTES_REPO_TOKEN" ]]; then
+  https_url="$(notes_https_url "$NOTES_REPO_URL")"
+  echo "[notes] cloning $https_url into $NOTES_DIR (HTTPS token auth)"
+  git -c "credential.helper=$NOTES_CRED_HELPER" \
+    clone --branch "$NOTES_REPO_BRANCH" "$https_url" "$NOTES_DIR"
+  git -C "$NOTES_DIR" config credential.helper "$NOTES_CRED_HELPER"
+else
+  echo "[notes] cloning $NOTES_REPO_URL into $NOTES_DIR"
+  git clone --branch "$NOTES_REPO_BRANCH" "$NOTES_REPO_URL" "$NOTES_DIR"
+fi
 mark_notes_safe_directory
 ensure_notes_identity

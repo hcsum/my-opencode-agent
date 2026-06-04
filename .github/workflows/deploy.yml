@@ -32,13 +32,19 @@ jobs:
             fi
             git submodule sync --recursive
             git submodule update --init --recursive --checkout --force
+            # Load .env so notes auth (NOTES_REPO_TOKEN) and any overrides are
+            # available to ensure-notes.sh and the credential helper below.
+            if [ -f .env ]; then set -a; . ./.env; set +a; fi
             bash scripts/ensure-notes.sh
             NOTES_BRANCH="$(git -C notes rev-parse --abbrev-ref HEAD)"
             if [ "$NOTES_BRANCH" = "HEAD" ]; then
               NOTES_BRANCH="${NOTES_REPO_BRANCH:-main}"
             fi
             NOTES_REMOTE="${NOTES_REPO_REMOTE:-origin}"
-            git -C notes pull --rebase --autostash "$NOTES_REMOTE" "$NOTES_BRANCH"
+            # A notes sync issue (divergence, credentials) must never block
+            # deploying the agent code itself.
+            git -C notes pull --rebase --autostash "$NOTES_REMOTE" "$NOTES_BRANCH" \
+              || echo "[deploy] notes pull failed; continuing with current notes checkout"
             export DEPLOY_COMMIT_SHA="${{ github.sha }}"
             export DEPLOY_RUN_ID="${{ github.run_id }}"
             export DEPLOY_ACTOR="${{ github.actor }}"

@@ -22,6 +22,25 @@ Defaults built into the scripts:
 - branch: `main`
 - remote: `origin`
 
+### Auth: HTTPS token (recommended) vs SSH key
+
+`scripts/ensure-notes.sh` supports two auth modes and picks one automatically:
+
+- **`NOTES_REPO_TOKEN` set** → the `notes` remote is rewritten to HTTPS
+  (`https://github.com/<owner>/<repo>.git`, derived from `NOTES_REPO_URL` in any
+  form) and authenticated with the token via a git credential helper. The
+  helper reads the token from the environment at call time, so it is never
+  written into `.git/config` or any tracked file. This is the only mode that
+  works **identically everywhere** — the container (which runs as root with no
+  ssh client or ssh config), the host, and CI — so it lets the agent push notes
+  from inside the container.
+- **`NOTES_REPO_TOKEN` unset** → falls back to using `NOTES_REPO_URL` as-is
+  (SSH/host-alias). This only works where the matching ssh key + config exist
+  (historically only the `deploy` user's home), so the container cannot push.
+
+`docker compose` already passes `.env` into the container via `env_file`, so a
+token placed in `.env` reaches the container with no further wiring.
+
 ## Standard commands
 
 - `npm run notes:bootstrap`
@@ -34,12 +53,37 @@ Initializes `./notes` if missing and prints the current branch and origin URL.
 3. Work normally.
 4. Use normal Git commands inside `notes/` to sync, commit, and push changes.
 
-## VPS setup
+## VPS setup (recommended: HTTPS token)
+
+This keeps the whole auth mechanism in code; the only host-specific artifact is
+the token value in `.env`. It works the same for the host, the deploy pipeline,
+and the container.
+
+1. Create a GitHub fine-grained PAT scoped to `hcsum/my-agent-notes` with
+   Contents: read and write.
+2. In the project `.env` on the VPS set:
+   - `NOTES_REPO_URL=https://github.com/hcsum/my-agent-notes.git`
+     (an SSH form also works; the HTTPS URL is derived from it)
+   - `NOTES_REPO_TOKEN=<the PAT>`
+3. Deploy normally. `scripts/ensure-notes.sh` switches the `notes` remote to
+   HTTPS and configures the env-reading credential helper; the deploy workflow
+   sources `.env` before pulling notes and treats a notes-pull failure as
+   non-fatal so it never blocks the code deploy. `docker compose` passes the
+   token into the container via `env_file: .env`, so the agent can push notes
+   from inside the container too.
+
+### Legacy: SSH deploy key (still supported)
+
+If `NOTES_REPO_TOKEN` is unset, the scripts fall back to the SSH form of
+`NOTES_REPO_URL`:
 
 1. Configure a repo-scoped deploy key for `my-agent-notes`.
 2. Add an SSH host alias like `github.com-my-agent-notes` in `/home/deploy/.ssh/config`.
-3. Set `NOTES_REPO_URL=git@github.com-my-agent-notes:hcsum/my-agent-notes.git` in the project `.env` on the VPS.
-4. Deploy normally. The GitHub Actions workflow updates `notes/` directly with Git before `docker compose up -d --build`.
+3. Set `NOTES_REPO_URL=git@github.com-my-agent-notes:hcsum/my-agent-notes.git` in `.env`.
+
+Note: that ssh key/alias only lives in the `deploy` user's home, so the
+container (running as root, no ssh client) cannot push notes with it — which is
+exactly why the token approach above is preferred.
 
 ## Day-to-day workflow
 
