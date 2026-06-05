@@ -1,0 +1,327 @@
+---
+name: web-access
+description: 所有联网操作必须通过此 skill 处理，包括：搜索、网页抓取、登录后操作、网络交互等。
+---
+
+# web-access Skill
+
+## 前置检查
+
+默认先运行自动检查命令：
+
+```bash
+# The script path is relative to this skill's base directory printed by the skill tool.
+node ./scripts/check-deps.mjs
+```
+
+脚本输出约定：
+
+- `check-deps.mjs` 始终输出单个 JSON 对象。
+- 是否已经有浏览器可用，以 `ok` 为准，不要自己猜。
+- `ok: true` 表示当前已经有可用浏览器路径，直接继续任务，不要先让用户选模式。
+- `ok: false` 表示当前不可直接用，再读取 `reason` 和 `guidance`，进入浏览器模式引导。
+- `provider` 表示当前实际使用的是哪类浏览器提供方；`local` 表示本地 CDP 浏览器，`browserbase` 表示 Browserbase 云浏览器。
+- `selectedMode` 表示当前实际要使用的模式；只在 `ok: true` 时按它继续。
+- `browserId`、`port`、`proxyReady`、`availableModes`、`selectedBecause` 是补充信息。
+- 不要依赖类似 `browser: ok`、`proxy: ready` 这类文本。
+- `sitePatterns` 字段列出当前已有的站点经验文件名。
+
+根据返回值决定下一步：
+
+- 若 `ok: true`：直接使用当前可用模式继续任务，不询问用户选模式。
+- 若 `ok: false`：再进入浏览器模式引导，向用户说明差异并让用户选择。
+
+只有在需要用户介入时，才解释这条核心差异：
+
+- **主力浏览器**：可能需要用户人工确认远程调试授权；自动继承现有登录态、书签、插件。
+- **专用浏览器**：配置完成后日常运行通常不需要用户人工确认 debug access；与主力浏览器完全隔离。
+
+如果用户明确要用专用浏览器，先只问一次他要用哪个浏览器，然后把选择映射成稳定的 `browser-id`：
+
+| browser-id | 浏览器 App 名称 |
+|---|---|
+| `chrome` | `Google Chrome` |
+| `chrome-canary` | `Google Chrome Canary` |
+| `chromium` | `Chromium` |
+| `brave` | `Brave Browser` |
+| `edge` | `Microsoft Edge` |
+| `arc` | `Arc` |
+
+确定 `browser-id` 后，专用浏览器启动命令固定为：
+
+```bash
+open -na "<Browser App Name>" --args \
+  --remote-debugging-port=9333 \
+  --user-data-dir="$HOME/.web-access/<browser-id>-dedicated-profile"
+```
+
+用户确认已启动后，重新运行默认检查命令，确认专用浏览器路径已经可用。
+
+补充约束：
+
+- **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
+- 自动检查不做跨 session 偏好记忆；依据当前可用连接实时判断（主力 `DevToolsActivePort` + `~/.web-access/*-dedicated-profile`）。
+- 自动检查只根据 `DevToolsActivePort` 判断连接状态，不扫描硬编码端口。
+
+## 联网工具选择
+
+浏览器 CDP 不要求 URL 已知——可从任意入口出发，通过页面内搜索、点击、跳转等方式找到目标内容。
+
+进入浏览器层后，`/eval` 就是你的眼睛和手：
+
+- **看**：用 `/eval` 查询 DOM，发现页面上的链接、按钮、表单、文本内容——相当于「看看这个页面有什么」
+- **做**：用 `/click` 点击元素、`/scroll` 滚动加载、`/eval` 填表提交——像人一样在页面内自然导航
+- **读**：用 `/eval` 提取文字内容，判断图片/视频是否承载核心信息——是则提取媒体 URL 定向读取或 `/screenshot` 视觉识别
+
+浏览网页时，**先了解页面结构，再决定下一步动作**。不需要提前规划所有步骤。
+
+### 补充：本地 Chrome 资源
+
+用户指向**本人访问过的页面**（"我之前看的那个讲 X 的文章"、"上次打开过的 XX 面板"）或**组织内部系统**（"我们的 XX 平台"、"公司那个 YY 系统"等公网搜不到的目标）时，检索本地 Chrome 书签/历史：
+
+```bash
+node ./scripts/find-url.mjs [关键词...] [--only bookmarks|history] [--limit N] [--since 1d|7h|YYYY-MM-DD] [--sort recent|visits]
+```
+
+关键词空格分词、多词 AND，匹配 title + url（可省略）；`--since` / `--sort` 仅作用于历史；默认按最近访问倒序，`--sort visits` 按访问次数排序（适合"高频访问的网站"这类场景）。
+
+### 程序化操作与 GUI 交互
+
+浏览器内操作页面有两种方式：
+
+- **程序化方式**（构造 URL 直接导航、eval 操作 DOM）：成功时速度快、精确，但对网站来说不是正常用户行为，可能触发反爬机制。
+- **GUI 交互**（点击按钮、填写输入框、滚动浏览）：GUI 是为人设计的，网站不会限制正常的 UI 操作，确定性最高，但步骤多、速度慢。
+
+根据对目标平台的了解来灵活选择方式。GUI 交互也是程序化方式的有效探测——通过一次真实交互观察站点的实际行为（URL 模式、必需参数、页面跳转逻辑），为后续程序化操作提供依据；同时当程序化方式受阻时，GUI 交互是可靠的兜底。
+
+**站点内交互产生的链接是可靠的**：通过用户视角中的可交互单元（卡片、条目、按钮）进行的站点内交互，自然到达的 URL 天然携带平台所需的完整上下文。而手动构造的 URL 可能缺失隐式必要参数，导致被拦截、返回错误页面、甚至触发反爬。
+
+## 浏览器模式引导
+
+在需要浏览器操作、且自动检查未检测到可用连接时，再进入浏览器模式引导。
+
+### 必须向用户提供以下选择说明:
+
+不能只说“选 1 还是 2”。必须先讲这条核心差异：
+
+- **是否需要人工确认调试授权**：主力浏览器可能需要；专用浏览器在配置完成后通常不需要。
+
+然后再补充：
+
+- **主力浏览器**：立即复用现有登录态；但与用户日常浏览不隔离。
+- **专用浏览器**：与日常浏览完全隔离，更适合长期稳定自动化；但首次需在专用 profile 重新登录和配置插件/书签。
+
+### 用户选择后的后续操作
+
+- 如果用户选择 **主力浏览器**：
+  - 让用户在 Chromium 系浏览器地址栏打开 `chrome://inspect/#remote-debugging`
+  - 勾选 **"Allow remote debugging for this browser instance"**
+  - 用户完成后，将后续参数设为：`--browser primary`
+
+- 如果用户选择 **专用浏览器**：
+  - 先询问用户希望使用哪个浏览器，不要直接假设。优先提供以下选项，并附带一个自由输入项：
+    - `Google Chrome`
+    - `Google Chrome Canary`
+    - `Chromium`
+    - `Brave Browser`
+    - `Microsoft Edge`
+    - `Arc`
+  - 把用户选择映射成对应 `browser-id`，然后返回固定启动命令，不要替用户执行启动。
+  - 用户确认已启动后，将后续参数设为：`--browser dedicated --browser-id <browser-id>`
+  - 进入专用浏览器路径后，后续检查、连接、排障都继续沿用这组 dedicated 参数，不要再退回默认检查命令
+
+补充约束：
+
+- 如果主力浏览器未连接，不要自动切换到专用浏览器路径；先明确告诉用户主力浏览器当前不可用，并让用户决定是开启主力浏览器远程调试，还是改用专用浏览器。
+- 只有在用户明确选择专用浏览器时，才进入专用浏览器的浏览器选择引导。
+
+## 浏览器 CDP 模式
+
+通过 CDP Proxy 连接浏览器，支持两种模式：
+
+- **主力浏览器**：连接平时主要使用的浏览器会话，天然携带现有登录态。
+- **专用浏览器**：连接一个使用独立 `user-data-dir` 启动的 Chromium 浏览器实例，和用户自己的浏览器操作隔离。
+
+若无用户明确要求，不主动操作用户已有 tab，所有操作都在自己创建的后台 tab 中进行，保持对用户环境的最小侵入。不关闭用户 tab 的前提下，完成任务后关闭自己创建的 tab，保持环境整洁。
+
+### 启动
+
+自动选择路径：
+
+```bash
+node ./scripts/check-deps.mjs
+```
+
+返回的 JSON 中：
+
+- `provider: "local"` 表示当前走的是本地 CDP 浏览器。
+- `provider: "browserbase"` 表示当前走的是 Browserbase 云浏览器。
+- `selectedMode: "primary"` 表示当前选中了主力浏览器。
+- `selectedMode: "dedicated"` 表示当前选中了专用浏览器。
+- 默认命令不是“固定走主力浏览器”，而是自动在可用连接里选择；两者都可用时优先 dedicated。
+
+显式主力浏览器路径：
+
+```bash
+node ./scripts/check-deps.mjs --browser primary
+```
+
+专用浏览器路径：
+
+```bash
+node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
+```
+
+脚本会检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。所有检查结果都在 JSON 字段里返回。
+
+### 何时主动切到主力浏览器
+
+默认走 dedicated 即可。但任务需要**主力浏览器里特有的登录态/会话**时，必须显式 `--browser primary`，否则自动选模式会选到 dedicated，看不到目标内容。典型触发：
+
+- 用户已在主力浏览器打开了目标页面（如 Ahrefs / Semrush / GSC dashboard / 内部公司系统），且让你读取那里的数据
+- 任务依赖主力浏览器里登录的付费 SaaS（dedicated profile 没登录）
+- 用户明确说 "用主力浏览器" / "use my main browser"
+
+切换是 proxy 全局状态切换：调 `--browser primary` 会 shutdown 当前 proxy 再起一个连主力。代价：
+
+- 之前 dedicated 上拿到的 targetId 全部失效，需要重新拿 tab
+- 浏览器本身的登录态/cookie 不动
+- Proxy 同一时刻只能指向一个浏览器，不能并行
+
+任务做完如需回到 dedicated，再次显式 `--browser dedicated`。
+
+### Proxy API
+
+所有操作通过 curl 调用 HTTP API：
+
+```bash
+# 列出用户已打开的 tab
+curl -s http://localhost:3456/targets
+
+# 创建新后台 tab（自动等待加载）
+curl -s "http://localhost:3456/new?url=https://example.com"
+
+# 页面信息
+curl -s "http://localhost:3456/info?target=ID"
+
+# 执行任意 JS：可读写 DOM、提取数据、操控元素、触发状态变更、提交表单、调用内部方法
+curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'document.title'
+
+# 捕获页面渲染状态（含视频当前帧）
+curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
+
+# 导航、后退
+curl -s "http://localhost:3456/navigate?target=ID&url=URL"
+curl -s "http://localhost:3456/back?target=ID"
+
+# 点击（POST body 为 CSS 选择器）— JS el.click()，简单快速，覆盖大多数场景
+curl -s -X POST "http://localhost:3456/click?target=ID" -d 'button.submit'
+
+# 真实鼠标点击 — CDP Input.dispatchMouseEvent，算用户手势，能触发文件对话框
+curl -s -X POST "http://localhost:3456/clickAt?target=ID" -d 'button.upload'
+
+# 文件上传 — 直接设置 file input 的本地文件路径，绕过文件对话框
+curl -s -X POST "http://localhost:3456/setFiles?target=ID" -d '{"selector":"input[type=file]","files":["/path/to/file.png"]}'
+
+# 滚动（触发懒加载）
+curl -s "http://localhost:3456/scroll?target=ID&y=3000"
+curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"
+
+# 关闭 tab
+curl -s "http://localhost:3456/close?target=ID"
+```
+
+### 页面内导航
+
+两种方式打开页面内的链接：
+
+- **`/click`**：在当前 tab 内直接点击用户视角中的可交互单元，简单直接，串行处理。适合需要在同一页面内连续操作的场景，如点击展开、翻页、进入详情等。
+- **`/new` + 完整 URL**：使用目标链接的完整地址（包含所有URL参数），在新 tab 中打开。适合需要同时访问多个页面的场景。
+
+很多网站的链接包含会话相关的参数（如 token），这些参数是正常访问所必需的。提取 URL 时应保留完整地址，不要裁剪或省略参数。
+
+### 媒体资源提取
+
+判断内容在图片里时，用 `/eval` 从 DOM 直接拿图片 URL，再定向读取——比全页截图精准得多。
+
+### 技术事实
+
+- 页面中存在大量已加载但未展示的内容——轮播中非当前帧的图片、折叠区块的文字、懒加载占位元素等，它们存在于 DOM 中但对用户不可见。以数据结构（容器、属性、节点关系）为单位思考，可以直接触达这些内容。
+- DOM 中存在选择器不可跨越的边界（Shadow DOM 的 `shadowRoot`、iframe 的 `contentDocument`等）。eval 递归遍历可一次穿透所有层级，返回带标签的结构化内容，适合快速了解未知页面的完整结构。
+- `/scroll` 到底部会触发懒加载，使未进入视口的图片完成加载。提取图片 URL 前若未滚动，部分图片可能尚未加载。
+- 拿到媒体资源 URL 后，公开资源可直接下载到本地后用读取；需要登录态才可获取的资源才需要在浏览器内 navigate + screenshot。
+- 短时间内密集打开大量页面（如批量 `/new`）可能触发网站的反爬风控。
+- 平台返回的"内容不存在""页面不见了"等提示不一定反映真实状态，也可能是访问方式的问题（如 URL 缺失必要参数、触发反爬）而非内容本身的问题。
+
+### 视频内容获取
+
+浏览器真实渲染，截图可捕获当前视频帧。核心能力：通过 `/eval` 操控 `<video>` 元素（获取时长、seek 到任意时间点、播放/暂停/全屏），配合 `/screenshot` 采帧，可对视频内容进行离散采样分析。
+
+### 登录判断
+
+主力浏览器通常天然携带现有登录态，大多数常用网站已登录。专用浏览器则需要用户在对应 profile 中单独完成一次登录。
+
+登录判断的核心问题只有一个：**目标内容拿到了吗？**
+
+打开页面后先尝试获取目标内容。只有当确认**目标内容无法获取**且判断登录能解决时，才告知用户：
+> "当前页面在未登录状态下无法获取[具体内容]，请在当前使用的浏览器中登录 [网站名]，完成后告诉我继续。"
+
+登录完成后无需重启任何东西，直接刷新页面继续。若使用专用浏览器，后续同一 profile 会保留该登录态。
+
+### 任务结束，失败，或中断
+
+用 `/close` 关闭自己创建的 tab，**必须**保留用户原有的 tab 不受影响。
+
+如果 `provider` 不是 `local`，**必须**调用 shutdown 释放远程浏览器 session。不要把这一步当作可选清理；它是任务完成、失败、或中途放弃前都必须执行的硬约束。
+
+```bash
+curl -s http://localhost:3456/shutdown
+```
+
+## 信息核实类任务
+
+核实的目标是**一手来源**，而非更多的二手报道。多个媒体引用同一个错误会造成循环印证假象。
+
+搜索引擎和聚合平台是信息发现入口，是**定位**信息的工具，不可用于直接**证明**真伪。找到来源后，直接访问读取原文。同一原则适用于工具能力/用法的调研——官方文档是一手来源，不确定时先查文档或源码，不猜测。
+
+| 信息类型 | 一手来源 |
+|----------|---------|
+| 政策/法规 | 发布机构官网 |
+| 企业公告 | 公司官方新闻页 |
+| 学术声明 | 原始论文/机构官网 |
+| 工具能力/用法 | 官方文档、源码 |
+
+**找不到官网时**：权威媒体的原创报道（非转载）可作为次级依据，但需向用户说明："未找到官方原文，以下核实来自[媒体名]报道，存在转述误差可能。"单一来源时同样向用户声明。
+
+## 站点经验
+
+操作中积累的特定网站经验，按域名存储在 `references/site-patterns/` 下。
+
+确定目标网站后，如果前置检查输出的 site-patterns 列表中有匹配的站点，必须读取对应文件获取先验知识（平台特征、有效模式、已知陷阱）。经验内容标注了发现日期，当作可能有效的提示而非保证——如果按经验操作失败，回退通用模式并更新经验文件。
+
+CDP 操作成功完成后，如果发现了有必要记录经验的新站点或新模式（URL 结构、平台特征、操作策略），主动写入对应的站点经验文件。只写经过验证的事实，不写未确认的猜测。
+
+文件格式：
+```markdown
+---
+domain: example.com
+aliases: [示例, Example]
+updated: 2026-03-19
+---
+## 平台特征
+架构、反爬行为、登录需求、内容加载方式等事实
+
+## 有效模式
+已验证的 URL 模式、操作策略、选择器
+
+## 已知陷阱
+什么会失败以及为什么
+```
+经验/陷阱内容标注发现日期，当作"可能有效的提示"而非"保证正确的事实"。
+
+## References 索引
+
+| 文件 | 何时加载 |
+|------|---------|
+| `references/cdp-api.md` | 需要 CDP API 详细参考、JS 提取模式、错误处理时 |
+| `references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验 |

@@ -1,3 +1,0 @@
-[submodule ".opencode/skills/web-access"]
-	path = .opencode/skills/web-access
-	url = https://github.com/hcsum/web-access-multi-browsers.git
