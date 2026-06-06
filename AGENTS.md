@@ -88,6 +88,15 @@ Before delegating, ask:
 
 ## `./notes` might contain context about tasks 
 
+## Long-term Memory
+
+- Memory content lives under `notes/memory/` (the `MEMORY.md` index + one file per fact). The write
+  rules live with the feature in the main repo at `.opencode/memory/PROTOCOL.md`. Both are auto-loaded
+  into context every session; expand an individual memory by reading its file when its index line is relevant.
+- Capture and recall follow `.opencode/memory/PROTOCOL.md`. When the user says "记住 / remember", persist
+  the fact under `notes/memory/` now. Memory is about the user and how to work with them — distinct from
+  `llm-wiki` (topic knowledge) and this file (durable agent behavior).
+
 ## 链接格式偏好
 
 - 当给用户发送链接时，不要用引号、反引号或尖括号包裹链接
