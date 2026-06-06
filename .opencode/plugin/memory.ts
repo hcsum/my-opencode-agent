@@ -40,7 +40,7 @@ const COMPACT_STATE_REL = ".data/memory-compact-state.json";
 // Cheap model for the background extraction/compaction passes. The whole point of
 // these passes (design §3.4) is a cheap LLM call, NOT the expensive session model
 // (openai/gpt-5.4). Default to its cheap sibling; override via env per task.
-const DEFAULT_MAINT_MODEL = "openai/gpt-5-mini";
+const DEFAULT_MAINT_MODEL = "openai/gpt-5.4-mini";
 
 const DEBOUNCE_MS = Number(process.env.MEMORY_EXTRACT_DEBOUNCE_MS) || 60_000;
 const EXTRACT_ENABLED = process.env.MEMORY_EXTRACT_ENABLED !== "0";
