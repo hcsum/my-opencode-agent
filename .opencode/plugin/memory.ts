@@ -177,9 +177,21 @@ export const MemoryPlugin: Plugin = async (ctx) => {
   // ignored, otherwise maintenance would recursively trigger itself.
   const internalSessions = new Set<string>();
 
-  const log = (msg: string, extra?: Record<string, unknown>) => {
+  const formatLog = (msg: string, extra?: Record<string, unknown>) => {
+    return `[memory] ${msg}${extra ? " " + JSON.stringify(extra) : ""}`;
+  };
+
+  const logInfo = (msg: string, extra?: Record<string, unknown>) => {
     try {
-      console.error(`[memory] ${msg}${extra ? " " + JSON.stringify(extra) : ""}`);
+      console.log(formatLog(msg, extra));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const logError = (msg: string, extra?: Record<string, unknown>) => {
+    try {
+      console.error(formatLog(msg, extra));
     } catch {
       /* ignore */
     }
@@ -422,7 +434,7 @@ ${op.body.trim()}
         fs.writeFileSync(path.join(memoryDir, fileNameFor(op)), renderMemoryFile(op));
         n++;
       } catch (err) {
-        log("write failed", { err: String(err) });
+        logError("write failed", { err: String(err) });
       }
     }
     return n;
@@ -438,7 +450,7 @@ ${op.body.trim()}
     });
     const exId = created.data?.id;
     if (!exId) {
-      log("headless: failed to create session");
+      logError("headless: failed to create session");
       return "";
     }
     internalSessions.add(exId);
@@ -515,12 +527,12 @@ ${op.body.trim()}
         rebuildIndex();
         bumpChurn(wrote);
       }
-      log("extract done", { sessionID, newMessages: fresh.length, ops: ops.length, wrote });
+      logInfo("extract done", { sessionID, newMessages: fresh.length, ops: ops.length, wrote });
 
       writeWatermark(sessionID, latestID);
       await maybeCompact();
     } catch (err) {
-      log("extract error", { sessionID, err: String(err) });
+      logError("extract error", { sessionID, err: String(err) });
     } finally {
       running.delete(sessionID);
     }
@@ -564,7 +576,7 @@ ${op.body.trim()}
         .toString()
         .trim();
     } catch (err) {
-      log("git checkpoint failed", { err: String(err) });
+      logError("git checkpoint failed", { err: String(err) });
       return null;
     }
   }
@@ -638,7 +650,7 @@ ${op.body.trim()}
           }
         }
       } catch (err) {
-        log("compact apply failed", { action: (op as any).action, err: String(err) });
+        logError("compact apply failed", { action: (op as any).action, err: String(err) });
       }
     }
     const conflictCount = writeConflicts(flags);
@@ -665,7 +677,7 @@ ${op.body.trim()}
           lastReason: reason,
           lastOutcome: "skipped-too-large",
         });
-        log("compact skipped: store too large for single pass", { chars: blocks.length, files: files.length });
+        logInfo("compact skipped: store too large for single pass", { chars: blocks.length, files: files.length });
         return;
       }
 
@@ -676,7 +688,7 @@ ${op.body.trim()}
           lastReason: reason,
           lastOutcome: "aborted-no-git",
         });
-        log("compact aborted: no git safety net in notes repo");
+        logInfo("compact aborted: no git safety net in notes repo");
         return;
       }
 
@@ -696,7 +708,7 @@ ${op.body.trim()}
           lastOutcome: "noop",
           lastConflictCount: 0,
         });
-        log("compact: store already clean", { checkpoint: sha, files: files.length });
+        logInfo("compact: store already clean", { checkpoint: sha, files: files.length });
         return;
       }
 
@@ -709,9 +721,9 @@ ${op.body.trim()}
         lastOutcome: "applied",
         lastConflictCount: stats.conflictCount,
       });
-      log("compact done", { checkpoint: sha, reason, files: files.length, ...stats });
+      logInfo("compact done", { checkpoint: sha, reason, files: files.length, ...stats });
     } catch (err) {
-      log("compact error", { err: String(err) });
+      logError("compact error", { err: String(err) });
     } finally {
       compactRunning = false;
     }
@@ -764,10 +776,10 @@ ${op.body.trim()}
             text: KEYWORD_NUDGE,
             synthetic: true,
           } as any);
-          log("keyword nudge injected", { sessionID: input.sessionID });
+          logInfo("keyword nudge injected", { sessionID: input.sessionID });
         }
       } catch (err) {
-        log("chat.message error", { err: String(err) });
+        logError("chat.message error", { err: String(err) });
       }
     },
 
