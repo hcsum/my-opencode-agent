@@ -66,7 +66,7 @@ When NOT to use:
 
 ## Skill Authoring
 
-- When creating or updating any file under `.opencode/skills/`, always load the `skill-authoring` skill first and follow it instead of improvising the skill structure or wording.
+- When authoring a skill — creating one, or shaping its structure, description, or `SKILL.md` instructions — load the `skill-authoring` skill first and follow it instead of improvising. Don't load it just to edit a skill's scripts or supporting files.
 
 ## Sub-Agent Divide & Conquer Strategy
 
