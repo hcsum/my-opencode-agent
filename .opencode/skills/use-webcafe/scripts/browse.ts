@@ -1,5 +1,9 @@
 #!/usr/bin/env npx tsx
 
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import * as path from "node:path";
+
 import {
   closeBackgroundTab,
   evalInTab,
@@ -9,6 +13,24 @@ import {
   ScriptResult,
 } from "./lib/browser.js";
 import { EXTRACT_SEARCH_RESULTS_JS } from "./lib/extractors.js";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+// Guarantee the shared CDP proxy is pointed at the dedicated browser before any
+// Web.Cafe tab work, so automation never silently drives the user's main browser.
+function ensureDedicatedBrowser(): { ok: boolean; message?: string } {
+  const res = spawnSync(process.execPath, [path.join(HERE, "ensure-dedicated.mjs")], {
+    encoding: "utf8",
+  });
+  const out = (res.stdout || "").trim();
+  const lastLine = out.split(/\r?\n/).filter(Boolean).pop() || "";
+  try {
+    const parsed = JSON.parse(lastLine);
+    return { ok: Boolean(parsed.ok), message: parsed.message };
+  } catch {
+    return { ok: res.status === 0, message: res.stderr || out };
+  }
+}
 
 interface SearchResult {
   title: string;
@@ -559,6 +581,14 @@ async function openResult(
 }
 
 async function handleBrowse(input: Input): Promise<ScriptResult> {
+  const dedicated = ensureDedicatedBrowser();
+  if (!dedicated.ok) {
+    return {
+      success: false,
+      message: `Could not attach the CDP proxy to the dedicated browser: ${dedicated.message || "unknown error"}`,
+    };
+  }
+
   switch (input.action) {
     case "search":
       return searchArticles(input.query);

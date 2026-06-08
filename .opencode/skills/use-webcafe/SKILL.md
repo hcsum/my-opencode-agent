@@ -33,6 +33,15 @@ printf '%s' '{"action":"messages","query":"外链","group":"哥飞的朋友们 7
 
 **Search is the primary navigation**: Always search first. Web.Cafe search covers all content. Search uses Simplified Chinese unless the word is in English in Chinese context (e.g. "SEO", "Adsense").
 
+## Browser: always dedicated
+
+`browse.ts` always runs on the **dedicated browser**, never the user's main browser. Before any tab work it runs `scripts/ensure-dedicated.mjs`, which launches the dedicated browser if needed and re-points the shared CDP proxy (`localhost:3456`) at it — even if `web-access` last switched the proxy to the primary browser. No manual setup is needed each run.
+
+- The dedicated browser is auto-detected from `~/.web-access/<id>-dedicated-profile` (prefers `brave` when several exist).
+- To force a specific browser, set `WEBCAFE_BROWSER_ID` to one of `chrome | chrome-canary | chromium | brave | edge | arc`.
+- If no dedicated profile exists yet, the script fails with guidance; set one up via the `web-access` skill first (it logs into Web.Cafe in that isolated profile).
+- Because the proxy is a global singleton, running this skill re-points it to dedicated. If you next need `web-access` on the primary browser, switch it back with `--browser primary`.
+
 ## How to search group messages
 
 1. Use `messages` with a query string
