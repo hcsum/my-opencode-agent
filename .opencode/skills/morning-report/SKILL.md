@@ -37,6 +37,7 @@ For each site:
 - Open with one short line on the site's overall mood/theme for the day.
 - Select 2 articles per the rules above.
 - Skip any candidate whose stable URL you cannot recover, and pick another you can title and link correctly.
+- **Skip paywalled or truncated articles.** Before summarizing, confirm you actually read the full text, not a few paragraphs cut off by a paywall/metering wall (e.g. The Verge meters by quota and walls the rest; FT marks 付费 articles). If the body is gated or truncated, do not summarize the partial content — drop it and pick another free, fully-readable article. Never write up a story from cut-off content. See the web-access skill's 付费墙与截断内容 guidance.
 
 Per selected article, write analyst-style (not a headline blurb):
 
