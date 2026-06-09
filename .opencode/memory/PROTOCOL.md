@@ -55,7 +55,8 @@ One line per memory, keyed by filename. Keep the header/comment at the top intac
 
 - This memory is about the **user** and **how to work with them**. Topic/world knowledge goes to the
   `llm-wiki` (`notes/knowledge/`); durable agent behavior rules go to `AGENTS.md`.
-- Never modify `notes/user.md` unless the user explicitly asks — it is the user's authoritative file,
-  not your notes layer.
+- `notes/user.md` is the Mentor's synthesized picture of the user, not this notes layer (see
+  `notes/AGENTS.md`). Keep operational atoms here in `notes/memory/`; don't duplicate them into
+  `user.md`.
 - Before creating a file, check for an existing one covering the same fact and update it instead.
   Delete a memory that turns out to be wrong.

@@ -11,6 +11,7 @@
     "notes:bootstrap": "bash scripts/bootstrap-notes.sh",
     "notes:update": "bash scripts/update-notes.sh",
     "notes:backup": "bash scripts/save-notes.sh",
+    "mentor:seed": "bash scripts/seed-mentor-tasks.sh",
     "opencode:login:openai": "opencode auth login -p openai",
     "start": "node dist/index.js",
     "opencode": "bash scripts/opencode-local.sh",
