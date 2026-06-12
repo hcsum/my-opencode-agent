@@ -10,6 +10,7 @@ Produce a daily briefing in two independent rounds: a portfolio-blind news round
 - Load the `summarization` skill before writing any summaries.
 - Use a real browser to access the websites directly. Do not guess or reconstruct URLs — capture the exact final article URL from the page or page interaction.
 - Read the user's sources, holdings, and interests from `./notes/user.md`. The holdings are used **only** in Round 2.
+- **Cover every site listed under `## Favorite Websites` in `user.md` — do not assume a fixed number.** The list grows and shrinks over time. Read it fresh each run and give every site its own section; never default to the first few or the ones you covered before.
 
 ## Continuity (do this first)
 
@@ -29,15 +30,15 @@ You will run a final dedup pass against this exclusion list before sending — s
 Select by **broad significance**: the genuinely most important or most interesting stories of the day across technology, markets, geopolitics, business/software strategy, product/internet trends, and capital flows.
 
 - **Portfolio-blind:** do NOT pick an article because it relates to the user's holdings. Holdings are handled in Round 2. Choosing on portfolio relevance is the main thing that has skewed past reports — avoid it here.
-- **Topic diversity (hard rule):** across all selected news articles, AI-centric pieces may be **at most about half**. When the day offers a clearly non-AI story of real significance, include at least one. Consciously vary themes across the three sites; do not let one narrative (e.g. AI) carry the whole report.
+- **Topic diversity (hard rule):** across all selected news articles, a dominant theme **at most about half**. Consciously vary themes across the sites; do not let one narrative carry the whole report.
 - **No forced synthesis:** connect narratives across sites only when there is a real, non-forced link. Do not manufacture a single through-line (especially not an AI one) just to tie the report together.
 
-For each site:
+For **each** site in the Favorite Websites list:
 
 - Open with one short line on the site's overall mood/theme for the day.
-- Select 2 articles per the rules above.
+- Select up to 2 articles per the rules above. Fewer is fine when the day is quiet or free candidates are thin — but do not silently drop an entire site; if a site yields nothing usable, say so in one line rather than omitting its section.
 - Skip any candidate whose stable URL you cannot recover, and pick another you can title and link correctly.
-- **Skip paywalled or truncated articles.** Before summarizing, confirm you actually read the full text, not a few paragraphs cut off by a paywall/metering wall (e.g. The Verge meters by quota and walls the rest; FT marks 付费 articles). If the body is gated or truncated, do not summarize the partial content — drop it and pick another free, fully-readable article. Never write up a story from cut-off content. See the web-access skill's 付费墙与截断内容 guidance.
+- **Paywall/truncation gate — verify before you write, do not trust the lede.** A page that opens (HTTP 200) with a few opening paragraphs is NOT proof you have the full text. For every candidate, run the web-access skill's 付费墙与截断内容 step before summarizing — that includes loading the target site's `references/site-patterns/{domain}.md` and applying its paywall test — and confirm the body is actually complete. On any gated or truncated article, **never write it up from the partial content**; drop it and pick another free, fully-readable piece. (Skipping this check is exactly what put truncated paywall pieces into past reports — the page opened, a lede showed, and the body was never verified.)
 
 Per selected article, write analyst-style (not a headline blurb):
 
@@ -63,7 +64,7 @@ If little has materially changed versus the previous reports, produce a **short,
 ## Output
 
 - Reply in Chinese (简体) per project rules; keep English titles, product names, tickers, and code identifiers in the original.
-- Under each site section in Round 1, list the 2 selected articles, each as:
+- Give every Favorite Website its own Round 1 section. Under each, list the selected articles (up to 2), each as:
   - the exact article title
   - one standalone line containing only the article URL (no quotes, backticks, or angle brackets; one link per line)
   - the analytical summary below that title/link pair
@@ -78,6 +79,7 @@ Run this check on the finished draft before you send it:
 - Compare every article title and URL in the draft against the exclusion list you extracted from `<prior_runs>`.
 - If any selected article matches a prior title or URL and is **not** framed as a one-or-two-line "较昨日新增" delta, remove it and either replace it with a genuinely new story or leave the report shorter.
 - Confirm no Round 1 article duplicates another within the same run.
+- Confirm every Favorite Website from `user.md` has a section (even if it's a one-line "今天无可用免费新文章"), and that no write-up rests on paywalled/truncated content that slipped past the gate.
 - Only send once the draft contains no already-covered full write-ups.
 
 ## Scheduling
