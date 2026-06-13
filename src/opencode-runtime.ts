@@ -1,5 +1,6 @@
 import type {
   AssistantMessage,
+  FilePartInput,
   Message,
   Part,
   PermissionRequest,
@@ -41,6 +42,14 @@ const MAX_STALL_RECOVERY_ATTEMPTS = 1;
 
 export type PermissionResponse = "once" | "always" | "reject";
 
+// An image lifted from the inbound email body/attachments, encoded as a data
+// URL so it can be handed to the model as a file part without a second fetch.
+export interface RunImageInput {
+  mime: string;
+  filename: string;
+  url: string;
+}
+
 export interface GmailRunRequest {
   threadId: string;
   messageId: string;
@@ -49,6 +58,7 @@ export interface GmailRunRequest {
   subject: string;
   rfcMessageId: string;
   textBody: string;
+  images?: RunImageInput[];
   timestamp: Date;
   sessionKey: string;
   sessionTitle: string;
@@ -206,14 +216,27 @@ export class OpencodeRuntime {
     this.ensureBackgroundLoops();
     this.noteProgress(run, "Run created and waiting for model output.");
 
+    // Inline images from the email travel only on the first dispatch — they are
+    // not persisted on the run, so a stall-recovery re-launch is text-only.
+    const fileParts = buildImageFileParts(request.images);
+    if (fileParts.length > 0) {
+      console.log(
+        `[opencode-runtime] attaching ${fileParts.length} inbound image(s) thread=${run.threadId}`,
+      );
+    }
+
     // promptAsync can stay open until the run finishes. Keep it in the
     // background so one slow Gmail thread does not block unrelated threads.
-    void this.launchPrompt(run, promptText);
+    void this.launchPrompt(run, promptText, fileParts);
 
     return { started: true, status: "running" };
   }
 
-  private async launchPrompt(run: ActiveRun, text: string): Promise<void> {
+  private async launchPrompt(
+    run: ActiveRun,
+    text: string,
+    fileParts: FilePartInput[] = [],
+  ): Promise<void> {
     const startedAt = Date.now();
     console.log(
       `[opencode-runtime] prompt dispatch thread=${run.threadId} session=${run.sessionId}`,
@@ -223,7 +246,7 @@ export class OpencodeRuntime {
         this.client.session.promptAsync({
           sessionID: run.sessionId,
           ...(this.config.opencodeModel ? { model: this.config.opencodeModel } : {}),
-          parts: [{ type: "text", text }],
+          parts: [{ type: "text", text }, ...fileParts],
         }),
       );
       this.noteProgress(run, "Prompt accepted by OpenCode runtime.");
@@ -1043,6 +1066,16 @@ export class OpencodeRuntime {
     }
     return result;
   }
+}
+
+function buildImageFileParts(images?: RunImageInput[]): FilePartInput[] {
+  if (!images?.length) return [];
+  return images.map((image) => ({
+    type: "file",
+    mime: image.mime,
+    filename: image.filename,
+    url: image.url,
+  }));
 }
 
 function collectMessageText(parts: Part[]): string {

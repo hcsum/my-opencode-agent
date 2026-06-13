@@ -37,6 +37,7 @@ import {
 } from "./public-activity.js";
 import type {
   PermissionResponse,
+  RunImageInput,
   RuntimeCallbacks,
 } from "./opencode-runtime.js";
 import { SerialQueue } from "./queue.js";
@@ -50,6 +51,12 @@ interface ThreadMeta {
   subject: string;
   messageId: string;
 }
+
+// Caps on inline images lifted from an inbound email, to keep the prompt from
+// blowing past model limits on image-heavy mail (signatures, tracking pixels,
+// photo attachments).
+const MAX_INBOUND_IMAGES = 5;
+const MAX_INBOUND_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export class GmailBridge {
   private oauth2Client: OAuth2Client | null = null;
@@ -381,6 +388,7 @@ export class GmailBridge {
             publicTask,
             async () => {
               const ensuredPublicTask = publicTask as PublicTaskContext;
+              const images = await this.extractImages(messageId, message.payload);
               const opencodeStartedAt = Date.now();
               const started = await this.opencode.startGmailRun(
                 {
@@ -391,6 +399,7 @@ export class GmailBridge {
                   subject,
                   rfcMessageId,
                   textBody,
+                  images,
                   timestamp: new Date(
                     parseInt(message.internalDate || String(Date.now()), 10),
                   ),
@@ -837,6 +846,64 @@ export class GmailBridge {
     return "";
   }
 
+  // Lift inline images and image attachments out of the message so they can be
+  // handed to the model as file parts. Small inline images carry their bytes in
+  // body.data; larger ones are referenced by attachmentId and fetched here.
+  private async extractImages(
+    messageId: string,
+    payload: gmail_v1.Schema$MessagePart | undefined,
+  ): Promise<RunImageInput[]> {
+    if (!this.gmail || !payload) return [];
+
+    const imageParts = collectImageParts(payload);
+    const images: RunImageInput[] = [];
+
+    for (const part of imageParts) {
+      if (images.length >= MAX_INBOUND_IMAGES) break;
+
+      const mime = part.mimeType || "image/png";
+      let base64Url = part.body?.data || "";
+
+      if (!base64Url && part.body?.attachmentId) {
+        try {
+          const attachment = await this.gmail.users.messages.attachments.get({
+            userId: "me",
+            messageId,
+            id: part.body.attachmentId,
+          });
+          base64Url = attachment.data.data || "";
+        } catch (err) {
+          console.warn(
+            `[gmail] failed to fetch image attachment ${part.body.attachmentId} for ${messageId}`,
+            err,
+          );
+          continue;
+        }
+      }
+
+      if (!base64Url) continue;
+
+      // Gmail returns base64url; data URLs need standard base64. Decode then
+      // re-encode to normalize alphabet and padding in one step.
+      const buffer = Buffer.from(base64Url, "base64url");
+      if (buffer.byteLength === 0 || buffer.byteLength > MAX_INBOUND_IMAGE_BYTES) {
+        continue;
+      }
+
+      images.push({
+        mime,
+        filename: part.filename || `image-${images.length + 1}`,
+        url: `data:${mime};base64,${buffer.toString("base64")}`,
+      });
+    }
+
+    if (images.length > 0) {
+      console.log(`[gmail] extracted ${images.length} inline image(s) from ${messageId}`);
+    }
+
+    return images;
+  }
+
   private async sendReply(threadId: string, text: string): Promise<void> {
     if (!this.gmail) return;
 
@@ -1151,6 +1218,24 @@ function parseGmailNewerThanWindow(raw: string): number | undefined {
 
 function isStandaloneUrl(input: string): boolean {
   return /^https?:\/\/\S+$/i.test(input);
+}
+
+function collectImageParts(
+  payload: gmail_v1.Schema$MessagePart,
+): gmail_v1.Schema$MessagePart[] {
+  const out: gmail_v1.Schema$MessagePart[] = [];
+  const walk = (part: gmail_v1.Schema$MessagePart | undefined): void => {
+    if (!part) return;
+    if (
+      part.mimeType?.startsWith("image/") &&
+      (part.body?.data || part.body?.attachmentId)
+    ) {
+      out.push(part);
+    }
+    part.parts?.forEach(walk);
+  };
+  walk(payload);
+  return out;
 }
 
 function parseFromHeader(from: string): { name: string; email: string } {
