@@ -24,6 +24,7 @@ printf '%s' '{"limit":30}' | npx tsx .opencode/skills/x-home-feed/scripts/read-h
 ```
 
 - The script returns JSON with `success`, `message`, and optional `data`.
+- The scan reads the **Following** tab (not "For you"): it switches to Following before scanning.
 
 ## How to summarize the home feed
 

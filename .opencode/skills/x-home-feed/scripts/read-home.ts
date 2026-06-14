@@ -33,6 +33,60 @@ function clampLimit(input?: number): number {
   return n;
 }
 
+async function switchToFollowing(targetId: string): Promise<ScriptResult | null> {
+  // X home defaults to the "For you" tab; switch to "Following" before scanning.
+  // The tabs may not be rendered immediately after navigation, so poll for them.
+  let found = false;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const clickResult = await evalInTab<{ found: boolean }>(
+      targetId,
+      `(() => {
+        const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+        const following = tabs.find((t) => (t.textContent || '').trim() === 'Following');
+        if (!following) return { found: false };
+        if (following.getAttribute('aria-selected') !== 'true') following.click();
+        return { found: true };
+      })()`,
+    );
+    if (clickResult.found) {
+      found = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  if (!found) {
+    return {
+      success: false,
+      message:
+        "Could not find the 'Following' tab on X home. The layout may have changed.",
+    };
+  }
+
+  // Wait for the Following tab to become active and its timeline to load.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await new Promise((r) => setTimeout(r, 500));
+    const selected = await evalInTab<boolean>(
+      targetId,
+      `(() => {
+        const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+        const following = tabs.find((t) => (t.textContent || '').trim() === 'Following');
+        return following?.getAttribute('aria-selected') === 'true';
+      })()`,
+    );
+    if (selected) {
+      // Give the freshly switched timeline a moment to render posts.
+      await new Promise((r) => setTimeout(r, 1500));
+      return null;
+    }
+  }
+
+  return {
+    success: false,
+    message: "Switched to the 'Following' tab but it did not activate in time.",
+  };
+}
+
 function toMessage(items: FeedItem[]): string {
   const lines: string[] = [];
   lines.push(`Fetched ${items.length} posts from X home feed.`);
@@ -84,6 +138,9 @@ async function readHomeFeed(input: ReadHomeInput): Promise<ScriptResult> {
         message: "X showed a block or challenge page for automated access.",
       };
     }
+
+    const switchError = await switchToFollowing(targetId);
+    if (switchError) return switchError;
 
     const items: FeedItem[] = [];
     const seen = new Set<string>();
