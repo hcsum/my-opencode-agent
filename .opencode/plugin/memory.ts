@@ -115,26 +115,47 @@ type CompactOp =
     }
   | { action: "flag"; files: string[]; note: string };
 
-const EXTRACT_SYSTEM = `You are a memory-extraction subroutine for a personal assistant.
-You read an excerpt of a conversation between the user and Pikachū, plus the current memory index, and decide what is worth remembering long-term.
+const EXTRACT_SYSTEM = `You are a SILENT, high-precision memory-extraction subroutine for a personal assistant.
+You read an excerpt of a conversation between the user and Pikachū, plus the current memory store, and decide what — if anything — is worth remembering long-term.
 
-Record ONLY durable, reusable facts about the USER or about HOW TO WORK with them. Four categories:
+You are the LOW-RECALL path. A separate explicit "记住 / remember" command handles anything the user deliberately wants saved. Your job is to catch only the rare durable fact that surfaces in passing. When in doubt, save NOTHING. For a normal working session the correct output is [].
+
+THE GATE — apply this test to every candidate BEFORE recording it:
+  "Strip away the CURRENT task and the specific artifact being worked on. Is this fact still true, still useful, and restateable NEXT MONTH in a DIFFERENT task — without referring to today's deliverable?"
+If you cannot restate it without pointing at the thing being edited right now (this resume / this PDF / this page / this render / this report run), it FAILS the gate. Drop it.
+
+Record ONLY durable, reusable facts about the USER or about HOW TO WORK with them, in four categories:
 - user: who the user is — role, identity, stable preferences, accounts, tools they use.
-- feedback: a correction or confirmed way of working the user gave (include why it matters).
-- project: an ongoing goal, task, or constraint not derivable from the repo itself.
-- reference: a pointer to an external resource (URL, dashboard, ticket, file).
+- feedback: a STANDING way of working the user wants by default — not a one-time correction about the artifact in front of you.
+- project: an ongoing goal or constraint that outlives the current task and isn't derivable from the repo.
+- reference: a durable pointer to an external resource worth recalling later (a dashboard, an account, a canonical source file) — NOT bookkeeping like "I saved a note at X just now".
 
-HARD BAR — do NOT record:
-- transient task details, one-off requests, or anything specific to just this conversation
-- general world knowledge or facts about the codebase that the repo already encodes
-- anything already covered by an existing memory (dedupe; if it refines an existing one, use action "update" with that entry's name)
-- speculation; only record what the user actually stated or confirmed
+NEGATIVE EXAMPLES — these all FAIL the gate; never record this kind of thing:
+- "The capability pills looked too big / felt weird" → reaction to one render of one page. DROP.
+- "Cut padding/margins so it fits one page" → a tweak to today's layout. DROP.
+- "Keep the contact block from wrapping in the PDF export" → fix for this specific document. DROP.
+- "Put Projects above Experience and remove the Languages section" → edits to this resume draft. DROP.
+- "Keep the CMS copy simple because these readers are non-technical" → instruction for this one deliverable. DROP.
+- "I saved a raw note at notes/my-files/...md" → transient task bookkeeping. DROP.
+These are episodic task details. They belong to the task, not to long-term memory, even though the user said them as corrections.
+
+POSITIVE EXAMPLES — these PASS (durable, task-independent):
+- "默认用中文回复" — a standing default that holds across every future task.
+- "Position me as an engineer first, not a PM" — a durable self-framing that outlives any one resume.
+- "Web.Cafe rate-limits agents; throttle to ≤5 requests / 10s" — operational know-how reusable forever.
+
+Other HARD bars:
+- General world knowledge, or facts the repo / code / AGENTS.md already encodes — DROP.
+- Anything already covered by an existing memory — do NOT add a near-duplicate. If the new detail genuinely refines an existing entry, use action "update" with that entry's exact name. Prefer updating one strong entry over scattering several thin ones.
+- Speculation — only record what the user actually stated or confirmed.
+
+Bias order for every candidate: DROP > update an existing entry > add a new one. Adding is the rarest outcome.
 
 UPDATE rule: when action is "update", your "body" REPLACES the existing file in full. The existing memories are shown to you below — carry over their still-valid content and fold in the new detail. NEVER drop information that is still true.
 
 Output ONLY a JSON array (no prose, no markdown fence). Each element:
 {"action":"add"|"update","type":"user"|"feedback"|"project"|"reference","name":"kebab-case-slug","title":"Short Title","description":"one-line hook for the index","body":"the fact; for feedback/project add a line starting with 'Why:' explaining the reason"}
-If nothing meets the bar, output exactly: []`;
+If nothing passes the gate, output exactly: []`;
 
 const COMPACT_SYSTEM = `You are a memory-compaction subroutine for a personal assistant's long-term memory store.
 You receive the FULL set of memory files (each: filename + frontmatter + body) and produce a reconciliation plan as a JSON array of operations.
@@ -182,11 +203,11 @@ export const MemoryPlugin: Plugin = async (ctx) => {
   };
 
   const logInfo = (msg: string, extra?: Record<string, unknown>) => {
-    try {
-      console.log(formatLog(msg, extra));
-    } catch {
-      /* ignore */
-    }
+    // try {
+    //   console.log(formatLog(msg, extra));
+    // } catch {
+    //   /* ignore */
+    // }
   };
 
   const logError = (msg: string, extra?: Record<string, unknown>) => {
