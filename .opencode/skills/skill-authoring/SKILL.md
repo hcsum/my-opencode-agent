@@ -107,6 +107,48 @@ Avoid:
 - long walls of prose when a short checklist or template would work better
 - heavy-handed `MUST` language everywhere without explaining intent
 
+## Revising an existing skill
+
+Editing a skill is not the same as editing prose for the person in the room. The file is read by
+a **fresh session with zero history** that never saw the previous version. Edit for that reader.
+
+- **Make clean edits — no edit-rationale residue.** When you remove or change an instruction,
+  delete it cleanly. Never leave traces of the edit in the file: no "removed X", no "previously
+  this said…", no "note: we used to…", no comment justifying the change. That "why" is for the
+  *current* human and belongs in your chat reply or the git commit message — to a fresh session
+  it is noise polluting a file that should read as if written from scratch.
+- **See the whole instruction graph, not just the open file.** A behavior can be specified at
+  different altitudes — top-level `AGENTS.md`/`CLAUDE.md`, the `SKILL.md`, a referenced file,
+  or a sibling skill. Before editing, read up and across: does the global file say anything about
+  this? Do sibling skills? A change in one place may invalidate logic at another altitude. Fix it
+  there too — don't edit the `SKILL.md` in front of you and leave a now-contradictory rule
+  tangled in `AGENTS.md`.
+- **Reference, don't duplicate.** Keep each piece of logic at exactly one altitude and point to
+  it from the others. Duplicated instructions drift out of sync; a single source of truth means a
+  later change touches one file. (References are fragile — see below — but drift is worse for
+  standing orders.)
+- **When the change is structural, rewrite the unit — don't splice.** If revising a skill's core
+  intent, regenerate the whole `SKILL.md` for cohesion rather than bolting new intent onto old
+  structure with a small local patch. A half-edited skill that contradicts itself is worse than
+  none.
+- **Resist additive bias.** The default pull is to *add* a bullet for every fix; unchecked, skills
+  bloat. Prefer consolidating or removing over piling on. Growth is not progress — a tighter skill
+  that says the same thing is better.
+
+## References and cross-links
+
+A skill points outward — to `scripts/`, `references/`, other skills (`use web-access`), and
+sometimes a specific section of `AGENTS.md`. Nothing validates these links, so they rot silently:
+rename a script or a referenced heading and every skill pointing at it breaks with no error until
+an agent follows the dead link mid-task.
+
+- Keep cross-references **few and stable**. Prefer pointing at a whole, stable file over a fragile
+  heading buried deep inside one.
+- When you rename, move, or delete a referenced target, grep for inbound references
+  (`grep -rl "<name>" .opencode/skills`) and update or remove every pointer.
+- A referenced target should still say what the reference assumes. If you change the target's
+  content, re-check the skills that lean on it.
+
 ## Review checklist
 
 Before finishing a new or revised skill, check:
@@ -118,6 +160,16 @@ Before finishing a new or revised skill, check:
 - Do large reference files have a table of contents?
 - Are examples reusable rather than overly tied to one case?
 - Would the user consider the skill's intent unsurprising if they only read the description?
+
+When revising an existing skill, also check:
+
+- Does the file read cleanly, as if written from scratch — no leftover edit-rationale ("removed",
+  "previously", "now changed to")?
+- Did this change require updates at another altitude (`AGENTS.md`, a sibling skill) that you also
+  made, rather than leaving a contradiction upstream?
+- Are the description and body still in sync — no behavior in the body the description fails to
+  advertise, and no trigger the body no longer delivers?
+- Do all referenced paths, skills, and sections still resolve and still say what the skill assumes?
 
 ## Safety
 
