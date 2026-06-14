@@ -50,6 +50,7 @@ export type PublicDomainEvent =
   | {
       type: "deployment";
       commitSha?: string;
+      commitMessage?: string;
       runId?: string;
       actor?: string;
       deployedAt?: string;
@@ -80,6 +81,7 @@ export interface PublicActivityEntry {
   skillName?: string;
   durationMs?: number;
   commitSha?: string;
+  commitMessage?: string;
   runId?: string;
   actor?: string;
 }
@@ -111,6 +113,7 @@ interface PublicActivityFile {
 
 interface DeploymentInfo {
   commitSha?: string;
+  commitMessage?: string;
   runId?: string;
   actor?: string;
   deployedAt?: string;
@@ -214,6 +217,7 @@ export class PublicEventPublisher {
           title: buildDeploymentTitle(event.commitSha),
           ...(buildDeploymentSummary(event) ? { summary: buildDeploymentSummary(event) } : {}),
           ...(event.commitSha ? { commitSha: event.commitSha } : {}),
+          ...(event.commitMessage ? { commitMessage: event.commitMessage } : {}),
           ...(event.runId ? { runId: event.runId } : {}),
           ...(event.actor ? { actor: event.actor } : {}),
         };
@@ -607,8 +611,16 @@ function buildDeploymentTitle(commitSha?: string): string {
 }
 
 function buildDeploymentSummary(event: DeploymentInfo): string | undefined {
-  const parts: string[] = [];
-  if (event.actor) parts.push(`by ${event.actor}`);
-  if (event.runId) parts.push(`run ${event.runId}`);
-  return parts.length > 0 ? parts.join(" · ") : undefined;
+  const meta: string[] = [];
+  if (event.actor) meta.push(`by ${event.actor}`);
+  if (event.runId) meta.push(`run ${event.runId}`);
+  const metaLine = meta.join(" · ");
+
+  // Lead with the concrete commit message so the event stream reads like a
+  // changelog rather than just an opaque SHA; fall back to the actor/run line.
+  const message = event.commitMessage?.trim();
+  if (message) {
+    return metaLine ? `${message} · ${metaLine}` : message;
+  }
+  return metaLine || undefined;
 }

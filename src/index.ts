@@ -24,6 +24,7 @@ async function main(): Promise<void> {
     config.publicActivityMaxEvents,
     {
       commitSha: config.deployCommitSha,
+      commitMessage: config.deployCommitMessage,
       runId: config.deployRunId,
       actor: config.deployActor,
       deployedAt: config.deployedAt,

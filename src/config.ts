@@ -61,6 +61,7 @@ export function loadConfig(): AppConfig {
     publicActivityMaxEvents:
       Number(process.env.PUBLIC_ACTIVITY_MAX_EVENTS) || 100,
     deployCommitSha: process.env.DEPLOY_COMMIT_SHA?.trim() || undefined,
+    deployCommitMessage: process.env.DEPLOY_COMMIT_MESSAGE?.trim() || undefined,
     deployRunId: process.env.DEPLOY_RUN_ID?.trim() || undefined,
     deployActor: process.env.DEPLOY_ACTOR?.trim() || undefined,
     deployedAt: process.env.DEPLOYED_AT?.trim() || undefined,

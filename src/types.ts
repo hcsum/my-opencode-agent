@@ -17,6 +17,7 @@ export interface AppConfig {
   schedulerMinIntervalMinutes: number;
   publicActivityMaxEvents: number;
   deployCommitSha?: string;
+  deployCommitMessage?: string;
   deployRunId?: string;
   deployActor?: string;
   deployedAt?: string;
