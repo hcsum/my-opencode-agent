@@ -135,6 +135,7 @@ interface ActiveRun {
   lastPartMessageId?: string;
   lastPartFingerprint?: string;
   lastMessageSyncAtMs: number;
+  loggedModel?: string;
 }
 
 interface StreamEventPayload {
@@ -238,8 +239,9 @@ export class OpencodeRuntime {
     fileParts: FilePartInput[] = [],
   ): Promise<void> {
     const startedAt = Date.now();
+    const requestedModel = formatConfiguredModel(this.config.opencodeModel);
     console.log(
-      `[opencode-runtime] prompt dispatch thread=${run.threadId} session=${run.sessionId}`,
+      `[opencode-runtime] prompt dispatch thread=${run.threadId} session=${run.sessionId}${requestedModel ? ` requestedModel=${requestedModel}` : ""}`,
     );
     try {
       await this.ensureSuccess(
@@ -715,6 +717,7 @@ export class OpencodeRuntime {
   }
 
   private trackAssistant(run: ActiveRun, info: AssistantMessage): void {
+    this.maybeLogUsedModel(run, info);
     const createdAt = info.time.created;
     if (
       run.latestAssistantCreatedAt === undefined ||
@@ -741,6 +744,7 @@ export class OpencodeRuntime {
     });
 
     if (!response || response.info.role !== "assistant") return;
+    this.maybeLogUsedModel(run, response.info);
     this.noteProgress(run, "Assistant produced terminal response.");
     this.clearPendingAssistantShell(run);
     await this.completeRun(run, collectMessageText(response.parts), response.info.error);
@@ -799,6 +803,13 @@ export class OpencodeRuntime {
       this.publicActivity.setIdleIfNoActiveRuns();
     }
     await run.callbacks.onTerminal();
+  }
+
+  private maybeLogUsedModel(run: ActiveRun, source: unknown): void {
+    const usedModel = extractUsedModel(source);
+    if (!usedModel || usedModel === run.loggedModel) return;
+    run.loggedModel = usedModel;
+    console.log(`[opencode-runtime] model used thread=${run.threadId} ${usedModel}`);
   }
 
   private maybeEmitToolStage(
@@ -1357,4 +1368,52 @@ function isActiveStatus(status: ThreadRunStatus): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatConfiguredModel(
+  model?: { providerID: string; modelID: string },
+): string | undefined {
+  const provider = model?.providerID?.trim();
+  const modelID = model?.modelID?.trim();
+  if (!provider || !modelID) return undefined;
+  return `${provider}/${modelID}`;
+}
+
+function extractUsedModel(source: unknown): string | undefined {
+  const direct = extractProviderModelPair(source);
+  if (direct) return direct;
+
+  if (!source || typeof source !== "object") return undefined;
+  const record = source as Record<string, unknown>;
+  return (
+    extractProviderModelPair(record.info) ||
+    extractProviderModelPair(record.metadata) ||
+    extractProviderModelPair(record.model)
+  );
+}
+
+function extractProviderModelPair(source: unknown): string | undefined {
+  if (!source || typeof source !== "object") return undefined;
+  const record = source as Record<string, unknown>;
+
+  const providerID = readString(record.providerID);
+  const modelID = readString(record.modelID);
+  if (providerID && modelID) return `${providerID}/${modelID}`;
+
+  const provider = readString(record.provider) || readNestedString(record.provider, "id");
+  const model = readString(record.model) || readNestedString(record.model, "id");
+  if (provider && model) return `${provider}/${model}`;
+
+  return undefined;
+}
+
+function readNestedString(source: unknown, key: string): string | undefined {
+  if (!source || typeof source !== "object") return undefined;
+  return readString((source as Record<string, unknown>)[key]);
+}
+
+function readString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }
