@@ -4,6 +4,25 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Memory } from "mem0ai/oss";
 
+// mem0ai writes operational chatter straight to the global `console`
+// (hundreds of console.log/info/debug/warn across oss/index.js: "[INFO] ...",
+// "Redis Client Connected", "Memory with ID ... does not exist", telemetry
+// warnings, etc). The plugin shares its process with the TUI, whose console
+// overlay captures every in-process console.* and paints it over the input box.
+// Our own logging uses ctx.client.app.log instead, so none of mem0's noise is
+// wanted — but we must NOT mute console globally (opencode + other plugins use
+// it). So we filter only the known mem0 chatter and leave console.error and
+// everything unrecognised untouched, so genuine errors still surface.
+const MEM0_NOISE =
+  /^\[(INFO|DEBUG|WARN)\]|^(Redis|Connected to Redis|Connected to Supabase|Successfully|Memory with ID)|telemetry/i;
+for (const method of ["log", "info", "debug", "warn"] as const) {
+  const original = console[method].bind(console);
+  console[method] = (...args: unknown[]) => {
+    if (typeof args[0] === "string" && MEM0_NOISE.test(args[0])) return;
+    original(...args);
+  };
+}
+
 /**
  * Lazily-constructed mem0 `Memory` instance shared by the auto-memory plugin
  * (mem0-memory.ts) and the one-off backfill script (scripts/mem0-backfill.ts).

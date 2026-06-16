@@ -5,8 +5,8 @@ import path from "node:path";
 // Build a deduped backlink-candidate list from a competitor's Semrush backlinks
 // export. For each referring domain NOT already in notes/seo/backlink-master.csv,
 // emit one row with the domain's authority score and a representative live link
-// (Source url + anchor + follow status) as a worked example of how that domain
-// hosts an outbound link. `doable` is left blank for the agent to triage.
+// (Source url + follow status) as a worked example of how that domain hosts
+// an outbound link. `doable` is left blank for the agent to triage.
 //
 // Usage:
 //   npx tsx competitor-candidates.ts <competitor-substring>
@@ -110,11 +110,7 @@ function findInput(sub: string, includes: string[], excludes: string[] = []): st
 
 type Rep = {
   example: string;
-  anchor: string;
   dofollow: boolean;
-  flags: string[];
-  title: string;
-  links: number;
   hasDofollow: boolean;
 };
 
@@ -152,14 +148,9 @@ function main() {
 
   const bl = readCsv(backlinksFile);
   const sUrl = col(bl.header, "Source url");
-  const sTitle = col(bl.header, "Source title");
-  const anchorI = col(bl.header, "Anchor");
   const noffI = col(bl.header, "Nofollow");
   const ascoreI = col(bl.header, "Page ascore");
   const lastI = col(bl.header, "Last seen");
-  const flagCols = ["Ugc", "Form", "Sitewide", "Frame", "Sponsored"]
-    .map((n) => ({ n: n.toLowerCase(), i: bl.header.indexOf(n) }))
-    .filter((x) => x.i !== -1);
 
   const refSet = new Set(refOrder);
   function toRegistrable(host: string): string {
@@ -182,17 +173,11 @@ function main() {
     const dofollow = (r[noffI] ?? "").trim().toLowerCase() !== "true";
     const ascore = parseInt(r[ascoreI]) || 0;
     const last = (r[lastI] ?? "").trim();
-    const flags = flagCols.filter((c) => (r[c.i] ?? "").trim().toLowerCase() === "true").map((c) => c.n);
-
     const prev = reps.get(domain);
     if (!prev) {
       const rep: Rep = {
         example: url,
-        anchor: (r[anchorI] ?? "").trim(),
         dofollow,
-        flags,
-        title: (r[sTitle] ?? "").trim(),
-        links: 1,
         hasDofollow: dofollow,
       };
       (rep as any)._as = ascore;
@@ -200,7 +185,6 @@ function main() {
       reps.set(domain, rep);
       continue;
     }
-    prev.links++;
     prev.hasDofollow = prev.hasDofollow || dofollow;
     const prevDofollow = prev.dofollow;
     const better =
@@ -209,10 +193,7 @@ function main() {
       (dofollow === prevDofollow && ascore === (prev as any)._as && last > ((prev as any)._last ?? ""));
     if (better) {
       prev.example = url;
-      prev.anchor = (r[anchorI] ?? "").trim();
       prev.dofollow = dofollow;
-      prev.flags = flags;
-      prev.title = (r[sTitle] ?? "").trim();
     }
     (prev as any)._as = Math.max((prev as any)._as ?? 0, ascore);
     (prev as any)._last = last > ((prev as any)._last ?? "") ? last : (prev as any)._last;
@@ -237,7 +218,7 @@ function main() {
     }
   }
 
-  const header = ["website", "doable", "AS", "example_source", "anchor", "dofollow", "links", "flags", "src_title"];
+  const header = ["website", "doable", "AS", "example_source", "dofollow"];
   const out: string[][] = [...candidates]
     .map((d) => {
       const rep = reps.get(d);
@@ -250,11 +231,7 @@ function main() {
           priorDoable.get(d) ?? "",
           String(Number(as) || 0),
           rep?.example ?? "",
-          rep?.anchor ?? "",
           rep ? (rep.dofollow ? "true" : "false") : "",
-          rep ? String(rep.links) : "",
-          rep ? rep.flags.join("|") : "",
-          rep?.title ?? "",
         ],
       };
     })
@@ -263,7 +240,7 @@ function main() {
 
   fs.writeFileSync(outFile, formatCsv([header, ...out]));
 
-  const dofollowCount = out.filter((r) => r[5] === "true").length;
+  const dofollowCount = out.filter((r) => r[4] === "true").length;
   console.log(
     JSON.stringify(
       {

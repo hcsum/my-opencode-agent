@@ -1,9 +1,9 @@
 ---
-name: backlink-workflow
-description: Turn competitor backlink exports into actionable link candidates and run the backlink prospecting workflow after export. Use when the task is "挖外链", generate `backlink-candidates-<competitor>.csv`, dedup against `backlink-master.csv`, decide `doable`, or maintain backlink candidate/master CSVs. If the raw Semrush export does not exist yet, load `use-semrush` first.
+name: backlink-prospecting
+description: Build and triage backlink targets from competitor exports before any live submission work starts. Use when the task is to parse Semrush exports, generate `backlink-candidates-<competitor>.csv`, dedup against `backlink-master.csv`, decide `doable`, or maintain target CSVs. Not for registering on target sites, filling forms, posting content, or placing live backlinks; use `backlink-execution` for that.
 ---
 
-This skill owns the backlink prospecting workflow after raw exports exist.
+This skill owns backlink target generation and triage after raw exports exist.
 
 ## Prerequisite
 
@@ -17,7 +17,7 @@ This skill owns the backlink prospecting workflow after raw exports exist.
 Run:
 
 ```bash
-npx tsx .opencode/skills/backlink-workflow/scripts/competitor-candidates.ts <competitor-substring>
+npx tsx .opencode/skills/backlink-prospecting/scripts/competitor-candidates.ts <competitor-substring>
 ```
 
 What it does:
@@ -30,24 +30,20 @@ What it does:
 
 Output columns:
 
-- `website, doable, AS, example_source, anchor, dofollow, links, flags, src_title`
-
-`flags` may include `form`, `ugc`, `sitewide`, `sponsored`, or `frame`.
+- `website, doable, AS, example_source, dofollow`
 
 ## Triage Rules
 
 - The only selection criterion is whether the placement looks doable with little effort.
 - Do not mark `no` just because the link is low quality, nofollow, or off-topic.
-- `form` and `ugc` are usually the fastest self-serve signals.
 - Very high-AS rows are often search engines, app stores, or aggregators that are not realistically reproducible.
 - If Semrush exported a referring domain without any usable per-link example, skip it for now; the script already excludes those rows.
 
-## Execution Rules
+## Handoff To Execution
 
-- For multi-step backlink platforms or rich-text editors, prepare the content and hand the UI clicks to the user instead of forcing full automation.
-- Do not abandon a platform on the first blocker; surface captcha, login, or manual-only steps so the user can help.
-- Each backlink article or post must use genuinely unique content. Vary angle, headings, prose, and anchor choices.
-- Update the backlink tracking CSV after each completed link item, not in a batch at the end.
+- This skill stops at target generation, dedup, and `doable` triage.
+- Once you decide a target should be worked, load `backlink-execution` for the site-by-site submission flow.
+- Keep `doable` focused on whether the target looks realistically placeable with low to moderate effort, not whether you have already completed it.
 
 ## Promote Keepers
 
@@ -57,5 +53,5 @@ Output columns:
 
 ## Caveats
 
-- The script expects the full Semrush export with columns such as `Anchor`, `Source title`, and the backlink flags.
+- The script expects the full Semrush export with columns such as `Source url`, `Nofollow`, `Page ascore`, and `Last seen`.
 - Semrush caps large per-link exports, so some refdomains may exist in the domain-level export but never appear in the emitted candidates file.
