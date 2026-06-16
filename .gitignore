@@ -7,6 +7,9 @@ dist/
 notes/
 tmp/
 signature_cache.json
+# mem0 local SQLite op-history (we set disableHistory; this is a safety net).
+memory.db
+.opencode/memory.db
 
 # Claude Code local runtime artifacts (process locks, personal settings)
 .claude/scheduled_tasks.lock

@@ -13,6 +13,8 @@ services:
     environment:
       - OPENCODE_SERVE_PORT=4096
       - OPENCODE_BASE_URL=http://127.0.0.1:4096
+      # Reach Qdrant over the compose network (service DNS), not localhost.
+      - QDRANT_URL=http://qdrant:6333
       - BRIDGE_DISABLE_LOCK=true
       - BROWSERBASE_REGION=ap-southeast-1
       - GMAIL_NEWER_THAN=10m
@@ -42,4 +44,20 @@ services:
     ports:
       - "4096:4096"
     working_dir: /workspace
+    restart: unless-stopped
+    # Start Qdrant first. We don't gate on a healthcheck: the mem0 client
+    # tolerates Qdrant being briefly unavailable (background add/search errors
+    # are caught), and the Qdrant image ships no curl/bash for a reliable probe.
+    depends_on:
+      - qdrant
+
+  # Vector store for the mem0-backed long-term memory plugin
+  # (.opencode/plugin/mem0-memory.ts). Data persists under .data (gitignored).
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: opencode-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./.data/qdrant:/qdrant/storage
     restart: unless-stopped

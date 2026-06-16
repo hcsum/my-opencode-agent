@@ -3,6 +3,6 @@
   "share": "manual",
   "snapshot": false,
   "model": "openai/gpt-5.4",
-  "instructions": [".opencode/memory/PROTOCOL.md", "notes/AGENTS.md", "notes/memory/MEMORY.md", "notes/user.md"],
-  "plugin": ["./plugin/scheduler.ts", "./plugin/memory.ts"]
+  "instructions": [".opencode/memory/PROTOCOL.md", "notes/AGENTS.md", "notes/user.md"],
+  "plugin": ["./plugin/scheduler.ts", "./plugin/mem0-memory.ts"]
 }

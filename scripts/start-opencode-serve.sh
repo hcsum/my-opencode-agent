@@ -10,6 +10,18 @@ if [[ -f .env && -z "${OPENCODE_SERVE_PORT:-}" && -z "${HTTPS_PROXY:-${https_pro
   set +a
 fi
 
+# The mem0 long-term-memory plugin needs GOOGLE_API_KEY (and optionally MEM0_*/
+# QDRANT_URL) in the opencode process env. opencode's own model auth is separate
+# (oauth in auth.json), so these may be absent even when opencode otherwise
+# works. Pull just these from .env when not already set — without clobbering
+# vars the environment already provides (e.g. docker compose overrides).
+if [[ -f .env ]]; then
+  while IFS='=' read -r key val; do
+    [[ -z "$key" || -n "${!key:-}" ]] && continue
+    export "$key=$val"
+  done < <(grep -E '^(GOOGLE_API_KEY|MEM0_[A-Z_]+|QDRANT_URL)=' .env)
+fi
+
 bash "$ROOT_DIR/scripts/ensure-notes.sh"
 
 mkdir -p "$ROOT_DIR/.data"
