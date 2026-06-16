@@ -140,25 +140,71 @@ hits) but the store bloats over time.
 - mem0 **does** ship a write-time UPDATE/DELETE "smart memory manager" flow
   (`DEFAULT_UPDATE_MEMORY_PROMPT` in Python; `getUpdateMemoryMessages` helper in TS). It's a
   *different `add` pipeline* than the additive one — and in the installed TS version
-  `getUpdateMemoryMessages` is **imported but never called** (`add` runs
-  `ADDITIVE_EXTRACTION_PROMPT`). The two pipelines are mutually exclusive.
+  `getUpdateMemoryMessages` does not exist in `mem0ai@3.0.8` dist at all (`add` runs
+  `ADDITIVE_EXTRACTION_PROMPT` only). The two pipelines are mutually exclusive.
 - Therefore switching to mem0's native consolidation would require a **fork/patch of mem0-ts**,
   and would **replace the additive prompt** and change how our `EXTRACTION_GATE.md` gate is
   injected. NOT worth it.
 
-### Chosen approach (when we do it): external compaction pass — NO fork
-Use mem0's **public API** as a separate maintenance step, orthogonal to `add` (so the additive
-pipeline + the gate stay exactly as-is, on stock `mem0ai`):
-- `getAll({ user_id })` → hand the whole store to an LLM → reconciliation plan
-  (merge near-dups / delete superseded / rewrite / **flag** genuine contradictions, never guess)
-  → apply via `mem.add` / `mem.delete`.
-- Ride the existing `maybeSnapshot` maintenance tick (churn/interval). `SNAPSHOT.md` (git-
-  committed by the notes sync) is the revertable safety net.
-- The reconciliation **logic already exists** in the retired `.opencode/plugin/memory.ts`
-  (Layer B compaction: `COMPACT_SYSTEM` prompt + merge/delete/rewrite/flag ops). Port it,
-  swapping markdown file I/O for `getAll`/`add`/`delete`.
+### Community context (GitHub findings, 2026-06)
+- **Issue #4896 closed "not planned"**: Official position — semantic conflict resolution will NOT
+  be added to the additive pipeline. The team's answer is memory linking + client-side retrieval
+  prioritization, not write-time merging.
+- **Issue #4573** ("97.8% junk" production audit, 10,134 entries, 32 days):
+  - The extraction prompt is the bottleneck, not the model. Upgrading from gemma2:2b to
+    Sonnet 4.6 made extraction *worse* — a better model follows the permissive default prompt
+    more faithfully, so it extracts more indiscriminately.
+  - Largest junk category (52.7%): **system prompt / boot file restating** — the agent's own
+    instructions get re-extracted every session.
+  - **Feedback loop amplification** is a confirmed production risk: memories recalled into
+    context are treated as new conversation content by the extraction LLM and re-extracted.
+    One hallucinated "User prefers Vim" became 808 copies over 32 days. Our EXTRACTION_GATE
+    should explicitly instruct the LLM to skip content that looks like a recalled memory.
+  - Their fix recommendation: negative few-shot examples in the extraction prompt (what NOT to
+    store), and a REJECT action in the update-decision prompt — both missing from the additive
+    pipeline.
+- **Issue #5352** (external workaround, open): Someone open-sourced a drop-in recipe:
+  timestamp + UUID prefixing on recall output, explicit `mem0_update(id)`/`mem0_delete(id)`
+  agent tools, and a weekly hygiene script (cosine ≥ 0.82 cluster → LLM merge → SDK
+  update/delete). Same pattern as our planned external compaction pass.
+- **PR #4302** (merged): `openclaw/` plugin in the mem0 repo added `filtering.ts`,
+  `isolation.ts`, and `DEFAULT_CUSTOM_INSTRUCTIONS`. These are in a **separate `openclaw`
+  package**, not in the `mem0ai` npm package — they are NOT in our `mem0ai@3.0.8` install.
+- **PR #5254** (open, unmerged as of 2026-06): Adds per-call `prompt` override to
+  `AddMemoryOptions` (TS parity with Python). Would let explicit "记住" triggers use a
+  stricter gate than idle session writes. Not yet usable.
 
-### Why deferred
-Not worth building until the store has grown enough to actually contain real overlap; at a
-handful of memories there is nothing to compact. Revisit when SNAPSHOT.md shows accumulating
-near-duplicates.
+### Implementation (as built, 2026-06)
+
+Implemented in `mem0-memory.ts` as a maintenance pass orthogonal to `add`. Key design:
+
+- **Trigger**: every 20 adds (`COMPACT_CHURN`) OR 24 hours (`COMPACT_INTERVAL_MS`), whichever
+  comes first. Guard: skips if store has fewer than 10 entries (`COMPACT_MIN_ENTRIES`).
+- **Pass**: `getAll({ user_id })` → integer-indexed listing (UUID anti-hallucination trick,
+  same as mem0's own extraction) → single Gemini call with `COMPACT_SYSTEM` prompt → parse
+  ops → apply via `mem.add` / `mem.delete` / `mem.update` → force snapshot.
+- **Ops**: `merge` (add merged entry, delete sources) / `delete` / `rewrite` (in-place update)
+  / `flag` (unresolvable contradictions written to `notes/memory/CONFLICTS.md`).
+- **Safety**: `COMPACT_MAX_CHARS = 80_000` hard limit — skips the LLM call if the serialized
+  store exceeds this. `SNAPSHOT.md` (git-committed by notes sync) is the revert safety net.
+- **Model**: `COMPACT_MODEL` env var (defaults to `MEM0_LLM_MODEL`, i.e. `gemini-2.5-flash`).
+  Direct Gemini REST call — no extra SDK dependency.
+- **Env vars**: `MEMORY_COMPACT_ENABLED` (default on), `MEMORY_COMPACT_CHURN`,
+  `MEMORY_COMPACT_MIN_ENTRIES`, `MEMORY_COMPACT_INTERVAL_MS`, `MEMORY_COMPACT_MODEL`.
+
+**Requires opencode server to be running** — all state (`addsSinceCompact`, `lastCompactAt`)
+is in-process memory. Process restart resets counters. On VPS where opencode runs continuously
+this is fine; local instances shouldn't rely on compaction firing reliably.
+
+### Known limitation: whole-store pass
+
+Every compaction run feeds the **entire store** to the LLM in one call. Cost grows linearly
+with store size. Current mitigations:
+- `COMPACT_MAX_CHARS = 80_000` aborts the call if the store is too large (but then compaction
+  never runs, which is also bad).
+- `COMPACT_CHURN = 20` and `COMPACT_INTERVAL_MS = 24h` keep the cadence low.
+
+**Not a problem now** (store is small), but will need a proper fix at scale. The right
+approach is semantic clustering: group memories by cosine similarity, compact only within
+each cluster. This avoids the whole-store pass entirely. Deferred until the store is large
+enough to warrant it.

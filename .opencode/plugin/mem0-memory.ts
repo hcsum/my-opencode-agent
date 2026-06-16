@@ -29,6 +29,7 @@ import { getMemory, USER_ID, COLLECTION, QDRANT_URL } from "./mem0-client";
 
 const WATERMARK_REL = ".data/memory-extract-watermark.json";
 const SNAPSHOT_REL = "notes/memory/SNAPSHOT.md";
+const CONFLICTS_REL = "notes/memory/CONFLICTS.md";
 
 const DEBOUNCE_MS = Number(process.env.MEMORY_EXTRACT_DEBOUNCE_MS) || 60_000;
 // A "记住/remember" keyword fires the SAME extractor early (short debounce)
@@ -45,6 +46,41 @@ const SNAPSHOT_CHURN = Number(process.env.MEMORY_SNAPSHOT_CHURN) || 5;
 const SNAPSHOT_INTERVAL_MS =
   Number(process.env.MEMORY_SNAPSHOT_INTERVAL_MS) || 12 * 60 * 60 * 1000;
 const SNAPSHOT_MAX = 2000;
+
+// Compaction cadence: run after this many adds, or once this long has passed.
+// Guard: at least this many memories must exist before compaction runs.
+const COMPACT_ENABLED = process.env.MEMORY_COMPACT_ENABLED !== "0";
+const COMPACT_CHURN = Number(process.env.MEMORY_COMPACT_CHURN) || 20;
+const COMPACT_MIN_ENTRIES = Number(process.env.MEMORY_COMPACT_MIN_ENTRIES) || 10;
+const COMPACT_INTERVAL_MS =
+  Number(process.env.MEMORY_COMPACT_INTERVAL_MS) || 24 * 60 * 60 * 1000;
+// Gemini model for the compaction LLM call (defaults to same as extraction).
+const COMPACT_MODEL = process.env.MEMORY_COMPACT_MODEL || process.env.MEM0_LLM_MODEL || "gemini-2.5-flash";
+// Safety limit: skip compaction if the serialized store exceeds this size.
+const COMPACT_MAX_CHARS = 80_000;
+
+const COMPACT_SYSTEM = `You are a memory-compaction subroutine for a personal assistant's long-term memory store.
+You receive the full memory store as a numbered list (each entry: integer ID + fact text) and produce a reconciliation plan as a JSON array of operations.
+
+Be CONSERVATIVE. This store is the assistant's durable knowledge about the user; wrongly deleting or merging loses real information. Prefer keeping over losing.
+
+Operations (output ONLY a JSON array, no prose, no markdown fence):
+- Merge near-duplicates that state the SAME fact across different entries:
+  {"action":"merge","sources":[0,2],"text":"the merged fact text"}
+  (creates a new entry with the merged text, then deletes every entry in sources)
+- Delete a memory that is clearly stale or fully superseded by another:
+  {"action":"delete","id":1,"reason":"superseded by id 3"}
+- Rewrite a single entry in place to tighten or correct it (keep same fact, better wording):
+  {"action":"rewrite","id":4,"text":"rewritten fact text"}
+- Flag a genuine CONTRADICTION you cannot resolve (you cannot tell which is current). Keep BOTH, do not pick:
+  {"action":"flag","ids":[0,3],"note":"contradict on X — user must resolve"}
+
+HARD RULES:
+- Only merge when the facts are unmistakably the SAME. Different facts about the same topic stay separate.
+- Only delete when clearly stale or fully superseded. If unsure, keep it.
+- For a contradiction where you cannot determine current truth, use "flag" — NEVER "delete" one side on a guess.
+- Use only the integer IDs from the input. Never reference IDs not in the list.
+If the store is already clean, output exactly: []`;
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -65,6 +101,9 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
   const pendingExplicit = new Set<string>();
   let addsSinceSnapshot = 0;
   let lastSnapshotAt = 0;
+  let addsSinceCompact = 0;
+  let lastCompactAt = 0;
+  let compactRunning = false;
 
   const log = async (level: LogLevel, message: string, extra?: Record<string, unknown>) => {
     try {
@@ -170,6 +209,126 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
     }
   }
 
+  // ---- compaction (external pass, orthogonal to add pipeline) ----------
+
+  // Direct Gemini REST call — avoids adding a new SDK dep. Same key used by mem0.
+  async function callGemini(system: string, user: string): Promise<string> {
+    const key = process.env.GOOGLE_API_KEY;
+    if (!key) throw new Error("GOOGLE_API_KEY not set");
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${COMPACT_MODEL}:generateContent?key=${key}`;
+    const body = {
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [{ role: "user", parts: [{ text: user }] }],
+      generationConfig: { responseMimeType: "application/json" },
+    };
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) throw new Error(`Gemini ${resp.status}: ${await resp.text()}`);
+    const data = (await resp.json()) as any;
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  }
+
+  async function compact() {
+    if (!COMPACT_ENABLED || compactRunning) return;
+    compactRunning = true;
+    const conflictsPath = path.join(root, CONFLICTS_REL);
+    try {
+      const mem = getMemory();
+      if (!mem) return;
+      const all = await mem.getAll({ filters: { user_id: USER_ID }, topK: SNAPSHOT_MAX });
+      const entries = all.results ?? [];
+      if (entries.length < COMPACT_MIN_ENTRIES) return;
+
+      // Map integer → UUID (anti-hallucination: LLM sees integers, not UUIDs).
+      const idxToUUID: string[] = [];
+      const uuidToIdx: Record<string, number> = {};
+      const listing = entries
+        .map((m, i) => {
+          idxToUUID[i] = m.id!;
+          uuidToIdx[m.id!] = i;
+          return `${i}: ${m.memory}`;
+        })
+        .join("\n");
+
+      if (listing.length > COMPACT_MAX_CHARS) {
+        await log("warn", "compact skipped: store too large for single pass", { chars: listing.length });
+        return;
+      }
+
+      const raw = await callGemini(COMPACT_SYSTEM, `MEMORY STORE:\n${listing}\n\nReturn the JSON array now.`);
+
+      let ops: any[];
+      try {
+        ops = JSON.parse(raw);
+        if (!Array.isArray(ops)) ops = [];
+      } catch {
+        await logError("compact: failed to parse LLM response", { raw: raw.slice(0, 300) });
+        return;
+      }
+
+      const stats = { merged: 0, deleted: 0, rewritten: 0, flagged: 0, errors: 0 };
+      const flags: string[] = [];
+
+      for (const op of ops) {
+        try {
+          if (op.action === "merge" && Array.isArray(op.sources) && op.text) {
+            // Add merged entry first, then delete sources.
+            await mem.add(op.text, { userId: USER_ID, metadata: { source: "compaction" }, infer: false });
+            for (const idx of op.sources) {
+              const uuid = idxToUUID[idx];
+              if (uuid) await mem.delete(uuid);
+            }
+            stats.merged++;
+          } else if (op.action === "delete" && typeof op.id === "number") {
+            const uuid = idxToUUID[op.id];
+            if (uuid) { await mem.delete(uuid); stats.deleted++; }
+          } else if (op.action === "rewrite" && typeof op.id === "number" && op.text) {
+            const uuid = idxToUUID[op.id];
+            if (uuid) { await (mem as any).update(uuid, op.text); stats.rewritten++; }
+          } else if (op.action === "flag" && Array.isArray(op.ids) && op.note) {
+            const refs = op.ids.map((i: number) => `[${i}] ${idxToUUID[i] ?? "?"}`).join(", ");
+            flags.push(`- ${refs} — ${String(op.note).replace(/\n/g, " ")}`);
+            stats.flagged++;
+          }
+        } catch (err) {
+          await logError("compact: op failed", { op, err: String(err) });
+          stats.errors++;
+        }
+      }
+
+      // Write/clear conflicts file.
+      fs.mkdirSync(path.dirname(conflictsPath), { recursive: true });
+      if (flags.length > 0) {
+        fs.writeFileSync(
+          conflictsPath,
+          `# Memory Conflicts\n\n<!-- Auto-generated by compaction. Each line is a contradiction the assistant could not resolve; please reconcile. -->\n\n${flags.join("\n")}\n`,
+        );
+      } else {
+        try { fs.unlinkSync(conflictsPath); } catch { /* already absent */ }
+      }
+
+      lastCompactAt = Date.now();
+      addsSinceCompact = 0;
+      await log("info", "compact done", stats);
+      // Force snapshot after compaction so SNAPSHOT.md reflects the cleaned store.
+      await maybeSnapshot(true);
+    } catch (err) {
+      await logError("compact error", { err: String(err) });
+    } finally {
+      compactRunning = false;
+    }
+  }
+
+  async function maybeCompact() {
+    if (!COMPACT_ENABLED) return;
+    const dueByChurn = addsSinceCompact >= COMPACT_CHURN;
+    const dueByTime = Date.now() - lastCompactAt >= COMPACT_INTERVAL_MS;
+    if (dueByChurn || dueByTime) void compact();
+  }
+
   // ---- auto extraction on idle (Mechanism 3) ----------------------------
 
   async function extract(sessionID: string) {
@@ -230,7 +389,9 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
       });
       writeWatermark(sessionID, latestID);
       addsSinceSnapshot++;
+      addsSinceCompact++;
       await maybeSnapshot();
+      await maybeCompact();
     } catch (err) {
       await logError("extract error", { sessionID, err: String(err) });
     } finally {
