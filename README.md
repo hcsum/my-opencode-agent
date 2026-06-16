@@ -1,47 +1,34 @@
 # My Opencode Agent
 
-This repo mainly contains 2 parts:
-- a shared skill tree under `.opencode/skills` that is exposed to Codex via `.codex/skills` and to Claude via `.claude/skills`
-- an Opencode runtime with a Gmail bridge 
+My personal AI workspace. I run [Opencode](https://github.com/anomalyco/opencode) or Claude Code inside this repo and interact with the agent throughout the day — in person at the terminal, or remotely via a Gmail bridge when I'm away from my computer. There's also a copy running on a VPS so work can continue even when my machine is offline.
 
-## How I use this agent
+## What's in here
 
-I use this project in 2 ways:
+- **Skills** — a set of custom skills under `.opencode/skills/` that encode my workflows (see below)
+- **Gmail bridge** — an Opencode SDK integration that lets me send instructions by email and receive results back; the bridge also handles scheduled tasks
+- **Memory** — long-term memory via [mem0](https://github.com/mem0ai/mem0), plus a `notes/` private git repo the agent maintains for ongoing context, research results, and my personal notes
+- **LLM Wiki** — an accumulating knowledge base the agent reads from and writes to over time
 
-- Deploy the agent to the cloud and talk to the agent via the Gmail bridge
-- Run an OpenCode TUI on this repo on my computer  
+## Why a central repo
 
-## Features of this agent
+Most of my active context lives here, not in the target repos. Research findings, ongoing work, project notes, prior experience — it's all in `notes/`. I've found myself starting almost every new task from this repo first, even when the actual code lives elsewhere, because the context is here and the skills know how to use it.
 
-- Web research through the web-access skill, can connect to a local browser if on my computer, or use BrowserBase remote browser if running on the VPS
-- LLM Wiki for accumulating and consolidating knowledge overtime
-- Gmail bridge can listen on `AGENT_INBOX_EMAIL`, only respond to `USER_EMAIL`, and send scheduled results to `USER_EMAIL`
+## Some of the skills I find myself using the most
 
-## Skills layout
+**`web-access`** — a fork of the original with multi-browser support added. I can tell the agent to use my main browser (so it inherits my login sessions), a dedicated research browser, or a cloud browser (Browserbase) for headless work. This one is the backbone of most other skills.
 
-The canonical skill source in this repo is `.opencode/skills`.
+**`morning-report`** — pulls a daily briefing from my favorite news sources and a portfolio check. Runs on a schedule and lands in my inbox.
 
-- Codex discovers repo-local skills through `.codex/skills`
-- Claude discovers the same skills through `.claude/skills`
+**`research`** — open-ended topic investigation: the agent plans a search strategy, reads actual pages, and synthesizes a structured report instead of just returning search snippets.
 
-Both paths are symlinks to `.opencode/skills`, so new skills should always be added under `.opencode/skills/<skill-name>/SKILL.md`.
+**`grill-me`** — interview mode. I describe a plan and the agent stress-tests it with relentless follow-up questions, walking down every branch of the decision tree and offering a recommended answer for each one.
 
-## Notes repo
+**`backlink-prospecting` + `backlink-execution`** — a two-phase SEO backlink pipeline: prospect candidates from competitor exports, triage what's doable, then execute live submissions. Split so I can review targets before anything goes live.
 
-`notes/` is a separate private Git repo that lives at the same path the agent already expects.
+**`llm-wiki`** — ingest a URL, file, or directory into a persistent knowledge base. Future sessions can query it. Useful for accumulating domain knowledge that would otherwise get lost between conversations.
 
-The standard setup and workflow live in `docs/notes-repo.md`.
+**`mentor`** — keeps a running todo list in `notes/todos.md`. I tell it what I'm working on or what just finished, and it keeps the list honest.
 
-Set `NOTES_REPO_URL` in `.env`, then initialize `notes/` with:
+**`x-home-feed` + `x-search`** — read my X Following feed or search X for a topic, without opening the app.
 
-Local can use `https://github.com/hcsum/my-agent-notes.git`.
-VPS should use the SSH host alias you configured for the deploy key, for example `git@github.com-my-agent-notes:hcsum/my-agent-notes.git`.
-If unset, the scripts default to branch `main` and remote `origin`.
-
-- `npm run notes:bootstrap` to initialize `notes/` in a standard way
-
-After bootstrap, work with the notes repo directly from inside `notes/` using normal Git commands.
-The local OpenCode entrypoints call the internal bootstrap check automatically, and the VPS deploy workflow updates `notes/` directly before `docker compose up --build`.
-If a machine still has a pre-migration plain `notes/` directory, the bootstrap logic renames it to `notes.pre-git-migration.<timestamp>` before cloning the private repo.
-
-Because `notes/` is its own repo, commit and push notes changes from inside `notes/`, not from the parent repo.
+**`check-keyword` + `use-semrush` + `use-ahrefs` + `serp-inspection`** — a loose SEO toolkit. Each skill wraps a tool or workflow: keyword potential, domain/keyword metrics, SERP weakness analysis.
