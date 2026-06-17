@@ -12,15 +12,18 @@ guardrails on top of it.
 
 - Stand up or update a deployment by following `docs/DEPLOY.md`, keeping all
   mechanism in code and secrets confined to a short, explicit list.
-- Never reintroduce per-user SSH state or HOME-relative mounts (the two
-  historical footguns).
+- Never reintroduce per-user SSH state or HOME-relative (`/root/...`) mounts.
+  All container state now lives under `/workspace` (XDG_*/GMAIL_MCP_DIR redirect
+  opencode and Gmail off `$HOME`), so mounts no longer depend on the running
+  user's home.
 
 ## Golden rules (do not violate)
 
 - **Never run `docker compose` as root on the VPS.** Always
-  `sudo -iu deploy bash -c 'cd <APP_DIR> && docker compose ...'`. Compose mounts
-  resolve relative to the project dir now, but running as root has historically
-  mounted empty `/root/...` dirs and silently broken Gmail/auth.
+  `sudo -iu deploy bash -c 'cd <APP_DIR> && docker compose ...'`. Mounts are
+  project-relative and container state lives under `/workspace`, so the old
+  empty-`/root/...` failure is gone — but running as `deploy` still keeps
+  ownership of the bind-mounted `.data`/`.secrets` files consistent.
 - **Notes auth is HTTPS token (`NOTES_REPO_TOKEN`), not SSH keys.** A token in
   `.env` works in the container, on the host, and in CI identically. Do not set
   up or depend on an SSH deploy key / host alias in some user's home.
@@ -33,7 +36,7 @@ guardrails on top of it.
 
 1. **New VPS:** run `scripts/provision-vps.sh` as root (idempotent). It creates
    the `deploy` user, installs Docker, clones the repo to `/opt/opencode-agent`,
-   creates `.secrets/{gmail-mcp,opencode-share,opencode-config}`, and scaffolds
+   creates `.secrets/{gmail-mcp,opencode-share}`, and scaffolds
    `.env`.
 2. **Secrets:** fill `.env` (`NOTES_REPO_URL`, `NOTES_REPO_TOKEN`, `USER_EMAIL`,
    provider keys). See `docs/DEPLOY.md` Step 2.

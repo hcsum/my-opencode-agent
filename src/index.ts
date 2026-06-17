@@ -4,6 +4,7 @@ import path from "node:path";
 import { loadConfig } from "./config.js";
 import { ExecutionSlot } from "./execution-slot.js";
 import { OpencodeSession } from "./opencode.js";
+import { startOpencodeServer } from "./opencode-server.js";
 import { PublicEventPublisher } from "./public-activity.js";
 import { SerialQueue } from "./queue.js";
 import { GmailBridge } from "./gmail.js";
@@ -32,6 +33,9 @@ async function main(): Promise<void> {
   );
   const executionSlot = new ExecutionSlot();
   initDatabase();
+  // Spawn the OpenCode server in-process (with the code-injected provider
+  // config) before connecting to it, then bind the bridge's clients to it.
+  const server = await startOpencodeServer(config.opencodeBaseUrl);
   const queue = new SerialQueue(publicActivity);
   const opencode = new OpencodeSession(config, publicActivity);
   await opencode.healthcheck();
@@ -71,6 +75,7 @@ async function main(): Promise<void> {
   try {
     await Promise.all(launches);
   } catch (error) {
+    server.close();
     releaseLock();
     throw error;
   }
@@ -118,13 +123,15 @@ async function main(): Promise<void> {
       console.log("[app] in-flight work drained — exiting cleanly");
     }
 
-    // 3) Full teardown.
+    // 3) Full teardown. Stop intake/clients first, then the server child last
+    //    so in-flight tasks had the server available right up to here.
     try {
       await scheduler?.stop();
       await bridge?.stop();
     } catch (error) {
       console.error("[app] error during teardown", error);
     }
+    server.close();
     releaseLock();
     process.exit(0);
   };

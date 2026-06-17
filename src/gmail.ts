@@ -86,14 +86,13 @@ export class GmailBridge {
   async launch(): Promise<void> {
     this.setupProxy();
 
-    const credDir = path.join(os.homedir(), ".gmail-mcp");
+    const credDir =
+      process.env.GMAIL_MCP_DIR?.trim() || path.join(os.homedir(), ".gmail-mcp");
     const keysPath = path.join(credDir, "gcp-oauth.keys.json");
     const tokensPath = path.join(credDir, "credentials.json");
 
     if (!fs.existsSync(keysPath) || !fs.existsSync(tokensPath)) {
-      console.warn(
-        "[gmail] skipping — missing credentials in ~/.gmail-mcp/",
-      );
+      console.warn(`[gmail] skipping — missing credentials in ${credDir}/`);
       return;
     }
 

@@ -2,17 +2,27 @@ services:
   agent:
     build: .
     container_name: opencode-agent
-    # Run the supervisor as PID 1 (not via `npm run`) so Docker's SIGTERM
-    # reaches it directly and the graceful-shutdown trap fires.
-    command: ["bash", "scripts/serve-and-bridge.sh"]
+    # The bridge spawns the OpenCode server in-process (src/opencode-server.ts),
+    # so a single command runs both. bridge.sh execs tsx as PID 1 so Docker's
+    # SIGTERM reaches Node directly and graceful shutdown (which then stops the
+    # server child) fires.
+    command: ["bash", "scripts/bridge.sh"]
     # Give the in-flight task time to finish and deliver before SIGKILL. Must
     # exceed SHUTDOWN_DRAIN_TIMEOUT_MS below, with headroom for the model
     # server to stop afterward.
     stop_grace_period: 300s
     env_file: .env
     environment:
-      - OPENCODE_SERVE_PORT=4096
+      # The bridge binds the spawned server to this URL's host/port.
       - OPENCODE_BASE_URL=http://127.0.0.1:4096
+      # Keep all runtime state under /workspace (never /root): redirect
+      # opencode's XDG dirs and the Gmail cred dir into the repo tree so the
+      # container is self-contained and the mounts below are uniform.
+      - XDG_DATA_HOME=/workspace/.local/share
+      - XDG_CONFIG_HOME=/workspace/.config
+      - XDG_CACHE_HOME=/workspace/.cache
+      - XDG_STATE_HOME=/workspace/.local/state
+      - GMAIL_MCP_DIR=/workspace/.gmail-mcp
       # Reach Qdrant over the compose network (service DNS), not localhost.
       - QDRANT_URL=http://qdrant:6333
       - BRIDGE_DISABLE_LOCK=true
@@ -32,15 +42,18 @@ services:
       - ./.data:/workspace/.data
       # Keep notes as a live host repo instead of baking them into the image.
       - ./notes:/workspace/notes
-      # Host-side credential/state dirs. These are project-relative by default
-      # so they resolve to the SAME path no matter which user runs
-      # `docker compose` (root vs deploy). Do NOT use `~`-relative paths here:
-      # `~` expands to the running user's home, so running as root once mounts
-      # an empty /root/... and silently breaks Gmail/auth. Override via .env
-      # only when you must point at an existing location on a legacy box.
-      - ${GMAIL_MCP_DIR:-./.secrets/gmail-mcp}:/root/.gmail-mcp
-      - ${OPENCODE_SHARE_DIR:-./.secrets/opencode-share}:/root/.local/share/opencode
-      - ${OPENCODE_CONFIG_DIR:-./.secrets/opencode-config}:/root/.config/opencode
+      # Credential/state dirs. Host sources are fixed under the project's
+      # .secrets/; container targets are under /workspace (matched by the
+      # XDG_*/GMAIL_MCP_DIR env above) so nothing lives in /root.
+      # - gmail-mcp: Gmail OAuth creds (gcp-oauth.keys.json + credentials.json);
+      #   the container-side GMAIL_MCP_DIR env tells the Gmail code to read here.
+      # - opencode-share: opencode's DATA dir — holds auth.json (incl. the
+      #   openai OAuth tokens and other provider API keys). Required.
+      # No opencode CONFIG-dir mount: custom providers are injected in code
+      # (src/opencode-server-config.ts) and provider auth lives in auth.json
+      # above, so the global ~/.config/opencode/opencode.json is not needed.
+      - ./.secrets/gmail-mcp:/workspace/.gmail-mcp
+      - ./.secrets/opencode-share:/workspace/.local/share/opencode
     ports:
       - "4096:4096"
     working_dir: /workspace

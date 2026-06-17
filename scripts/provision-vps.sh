@@ -71,7 +71,7 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 # 4. Standardized credential/state dirs (project-relative, never ~) ----------
 log "creating .secrets/ credential dirs"
 install -d -o "$APP_USER" -g "$APP_USER" -m 700 "$APP_DIR/.secrets"
-for d in gmail-mcp opencode-share opencode-config; do
+for d in gmail-mcp opencode-share; do
   install -d -o "$APP_USER" -g "$APP_USER" -m 700 "$APP_DIR/.secrets/$d"
 done
 

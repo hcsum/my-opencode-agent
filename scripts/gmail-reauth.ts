@@ -32,7 +32,8 @@ async function main(): Promise<void> {
     console.log(`[reauth] using proxy ${proxy}`);
   }
 
-  const credDir = path.join(os.homedir(), ".gmail-mcp");
+  const credDir =
+    process.env.GMAIL_MCP_DIR?.trim() || path.join(os.homedir(), ".gmail-mcp");
   const keysPath = path.join(credDir, "gcp-oauth.keys.json");
   const tokensPath = path.join(credDir, "credentials.json");
 

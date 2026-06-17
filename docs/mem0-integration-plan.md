@@ -99,8 +99,9 @@ source/message-id provenance — we inject `source`/`sessionId` ourselves.
   `.opencode/plugin/mem0-env.ts` (loads `.env` + disables telemetry before mem0 import),
   `.opencode/memory/EXTRACTION_GATE.md` (low-recall gate).
 - **EDIT:** `.opencode/opencode.json` (plugin list + instructions), `docker-compose.yml`
-  (qdrant), `.env.example`, `.opencode/memory/PROTOCOL.md` (pull-based),
-  `scripts/start-opencode-serve.sh` (forwards `GOOGLE_API_KEY`).
+  (qdrant), `.env.example`, `.opencode/memory/PROTOCOL.md` (pull-based).
+  (`GOOGLE_API_KEY` now reaches the spawned server via the bridge's process env;
+  the old `scripts/start-opencode-serve.sh` forwarder was retired.)
 - **RETIRED (decommissioned, file kept):** `.opencode/plugin/memory.ts`; old
   `notes/memory/*.md` + `MEMORY.md` remain inert (no longer in `instructions`).
 

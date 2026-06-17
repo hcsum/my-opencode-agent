@@ -13,10 +13,11 @@ process.env.MEM0_TELEMETRY ??= "false";
 
 // Load the project `.env` into process.env for keys the plugin needs, IF they
 // aren't already set. opencode loads plugins in its own process and does NOT
-// source `.env` — only the npm launcher scripts (opencode-local.sh /
-// start-opencode-serve.sh) do. So a bare `opencode` TUI launch has no
-// GOOGLE_API_KEY, and mem0's Gemini client throws an auth error. Loading it
-// here makes memory work regardless of how opencode started.
+// source `.env` — only the npm launcher script (opencode-local.sh) and the
+// bridge's process env (which the in-process server inherits) carry it. So a
+// bare `opencode` TUI launch has no GOOGLE_API_KEY, and mem0's Gemini client
+// throws an auth error. Loading it here makes memory work regardless of how
+// opencode started.
 function findEnvFile(): string | null {
   // Walk up from cwd looking for a `.env` (cwd is normally the project root).
   let dir = process.cwd();

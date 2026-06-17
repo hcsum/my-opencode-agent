@@ -49,7 +49,7 @@ This is idempotent and:
 - creates the `deploy` user and adds it to the `docker` group,
 - installs Docker + the compose plugin,
 - clones the repo to `/opt/opencode-agent` (owned by `deploy`),
-- creates `.secrets/{gmail-mcp,opencode-share,opencode-config}` (mode 700),
+- creates `.secrets/{gmail-mcp,opencode-share}` (mode 700),
 - scaffolds `.env` from `.env.example`,
 - prints the remaining manual steps.
 
@@ -65,9 +65,10 @@ Edit `/opt/opencode-agent/.env` (as `deploy`). Required / common keys:
 | `BROWSERBASE_*`, `CAPSOLVER_API_KEY` | web-access providers (if used) |
 | `OPENCODE_MODEL` | model id (or set in compose `environment`) |
 
-Leave `GMAIL_MCP_DIR` / `OPENCODE_SHARE_DIR` / `OPENCODE_CONFIG_DIR` unset to
-use the standardized `./.secrets/...` defaults. Only set them to absolute paths
-when adopting a legacy box whose creds already live elsewhere.
+Credential/state dirs are mounted from the project's `./.secrets/...` (sources
+hardcoded in `docker-compose.yml`). The global `~/.config/opencode` is not
+mounted — custom providers are injected in code and provider auth lives in the
+share dir's `auth.json`.
 
 ## Step 3 — One-time interactive auth (cannot be scripted)
 
@@ -83,14 +84,20 @@ when adopting a legacy box whose creds already live elsewhere.
 
 **OpenCode model auth:**
 
+Run the login *inside the running container* so credentials land in the share
+dir via its `XDG_DATA_HOME` mapping (container `/workspace/.local/share/opencode`
+= host `./.secrets/opencode-share`):
+
 ```bash
-# as deploy, with the project's opencode share dir
-cd /opt/opencode-agent
-OPENCODE_SHARE_DIR=./.secrets/opencode-share npm run opencode:login:openai
+# as deploy, container must be up
+docker exec -it opencode-agent opencode auth login -p openai
 ```
 
-(or run `opencode auth login -p <provider>` so credentials land in
-`./.secrets/opencode-share`).
+This writes `auth.json` (OAuth tokens / API keys) to
+`./.secrets/opencode-share/auth.json`. Repeat with `-p <provider>` for any other
+provider you use (deepseek, zai, packyapi-usage, …). Custom provider
+*definitions* come from code (`src/opencode-server-config.ts`), not a config
+file.
 
 ## Step 4 — GitHub Actions secrets (on the repo)
 
@@ -117,7 +124,7 @@ sudo -iu deploy bash -c 'cd /opt/opencode-agent && docker compose up -d --build'
 ```bash
 sudo -iu deploy bash -c 'cd /opt/opencode-agent && docker compose ps'
 # logs should show, in order:
-#   opencode server listening
+#   [opencode-serve] listening on http://127.0.0.1:4096
 #   [opencode] connected; visibleSessions=...
 #   [scheduler] recovered N task(s)
 #   [gmail] connected as <inbox>           (if Gmail enabled)
@@ -128,9 +135,10 @@ docker compose -f /opt/opencode-agent/docker-compose.yml logs --tail 30 agent
 
 ## Golden rules (avoid the known footguns)
 
-- **Never run `docker compose` as root** on the VPS. The mounts are
-  project-relative now, but running as root historically mounted an empty
-  `/root/...` and broke Gmail/auth. Always `sudo -iu deploy`.
+- **Never run `docker compose` as root** on the VPS. Container state now lives
+  under `/workspace` (not `/root`), so the old empty-`/root/...` failure is gone;
+  running as `deploy` still keeps `.data`/`.secrets` file ownership consistent.
+  Always `sudo -iu deploy`.
 - **Notes auth = HTTPS token**, not SSH keys. A token in `.env` works in the
   container, on the host, and in CI identically; an SSH key only works for the
   one user whose home holds it.
@@ -144,7 +152,7 @@ docker compose -f /opt/opencode-agent/docker-compose.yml logs --tail 30 agent
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `[gmail] skipping — missing credentials` | compose run as root, or creds not in `GMAIL_MCP_DIR` | recreate as `deploy`; confirm files in `.secrets/gmail-mcp/` |
+| `[gmail] skipping — missing credentials` | compose run as root, or creds missing | recreate as `deploy`; confirm files in `.secrets/gmail-mcp/` |
 | notes `pull --rebase` conflict during deploy | notes diverged (commits piled up locally) | resolve in `notes/`, push; ensure container can push (token set) |
 | `Could not resolve hostname github.com-...` | SSH host alias only in one user's home | switch notes to HTTPS token (`NOTES_REPO_TOKEN`) |
 | no morning report AND no email task replies | Gmail OAuth `invalid_grant` | re-auth, copy `credentials.json`, restart; publish OAuth app |
