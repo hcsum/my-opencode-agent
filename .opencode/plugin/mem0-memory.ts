@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { type Plugin, tool } from "@opencode-ai/plugin";
 
-import { getMemory, USER_ID, COLLECTION, QDRANT_URL } from "./mem0-client";
+import { getMemory, USER_ID, COLLECTION, QDRANT_URL } from "../lib/mem0-client";
 
 /**
  * mem0-backed long-term memory plugin (replaces memory.ts). See
