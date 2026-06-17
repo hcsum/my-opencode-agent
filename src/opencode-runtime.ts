@@ -35,8 +35,6 @@ const HARD_TIMEOUT_MS = 25 * 60 * 1000;
 const POLL_INTERVAL_MS = 3000;
 const STREAM_IDLE_TIMEOUT_MS = 45000;
 const WEB_ACCESS_HANDOFF_TIMEOUT_MS = 75 * 1000;
-// How long to tolerate a session stuck in "retry" before switching to the fallback model.
-const RATE_LIMIT_FALLBACK_TIMEOUT_MS = 60 * 1000;
 const DIAGNOSTIC_LOG_INTERVAL_MS = 30 * 1000;
 const ASSISTANT_SHELL_STALL_TIMEOUT_MS = 90 * 1000;
 const BUSY_MESSAGE_SYNC_INTERVAL_MS = 15 * 1000;
@@ -140,7 +138,6 @@ interface ActiveRun {
   loggedModel?: string;
   currentModel?: { providerID: string; modelID: string };
   usedFallbackModel?: boolean;
-  retryingSinceMs?: number;
 }
 
 interface StreamEventPayload {
@@ -589,7 +586,7 @@ export class OpencodeRuntime {
   private async pollActiveRuns(): Promise<void> {
     if (this.activeRuns.size === 0) return;
 
-    const statusMap = await this.unwrap<Record<string, { type: string }>>(
+    const statusMap = await this.unwrap<Record<string, { type: string; attempt?: number }>>(
       this.client.session.status(),
     ).catch((error) => {
       console.error("[opencode-runtime] status poll failed", error);
@@ -603,7 +600,9 @@ export class OpencodeRuntime {
         continue;
       }
 
-      const sessionStatus = statusMap?.[run.sessionId]?.type;
+      const sessionEntry = statusMap?.[run.sessionId];
+      const sessionStatus = sessionEntry?.type;
+      const sessionRetryAttempt = sessionEntry?.attempt ?? 0;
       this.maybeLogDiagnostic(run, now, sessionStatus);
 
       if (shouldSyncBusyMessages(run, now, sessionStatus)) {
@@ -642,19 +641,14 @@ export class OpencodeRuntime {
         continue;
       }
 
-      if (sessionStatus === "retry") {
-        if (!run.retryingSinceMs) {
-          run.retryingSinceMs = now;
-        } else if (
-          !run.usedFallbackModel &&
-          this.config.opencodeModelFallback &&
-          now - run.retryingSinceMs > RATE_LIMIT_FALLBACK_TIMEOUT_MS
-        ) {
-          await this.switchToFallbackModel(run);
-          continue;
-        }
-      } else {
-        run.retryingSinceMs = undefined;
+      if (
+        sessionStatus === "retry" &&
+        sessionRetryAttempt >= 1 &&
+        !run.usedFallbackModel &&
+        this.config.opencodeModelFallback
+      ) {
+        await this.switchToFallbackModel(run);
+        continue;
       }
 
       if (sessionStatus === "busy") {
@@ -998,11 +992,10 @@ export class OpencodeRuntime {
     const fallback = this.config.opencodeModelFallback!;
     run.usedFallbackModel = true;
     run.currentModel = fallback;
-    run.retryingSinceMs = undefined;
     const primary = formatConfiguredModel(this.config.opencodeModel) ?? "default";
     const fallbackStr = formatConfiguredModel(fallback)!;
     console.warn(
-      `[opencode-runtime] session stuck in retry for ${RATE_LIMIT_FALLBACK_TIMEOUT_MS / 1000}s on ${primary}, aborting and switching to fallback ${fallbackStr} thread=${run.threadId}`,
+      `[opencode-runtime] session retry attempt >= 1 on ${primary}, aborting and switching to fallback ${fallbackStr} thread=${run.threadId}`,
     );
     this.noteProgress(
       run,
