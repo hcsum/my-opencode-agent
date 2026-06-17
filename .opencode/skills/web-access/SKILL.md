@@ -119,14 +119,8 @@ node ./scripts/find-url.mjs [关键词...] [--only bookmarks|history] [--limit N
   - 用户完成后，将后续参数设为：`--browser primary`
 
 - 如果用户选择 **专用浏览器**：
-  - 先询问用户希望使用哪个浏览器，不要直接假设。优先提供以下选项，并附带一个自由输入项：
-    - `Google Chrome`
-    - `Google Chrome Canary`
-    - `Chromium`
-    - `Brave Browser`
-    - `Microsoft Edge`
-    - `Arc`
-  - 把用户选择映射成对应 `browser-id`，然后返回固定启动命令，不要替用户执行启动。
+  - 先询问用户希望使用哪个浏览器，不要直接假设。从上文「前置检查」的 browser-id 映射表里给出选项（Chrome / Chrome Canary / Chromium / Brave / Edge / Arc），并附带一个自由输入项。
+  - 把用户选择映射成对应 `browser-id`，然后返回该表下方的固定启动命令，不要替用户执行启动。
   - 用户确认已启动后，将后续参数设为：`--browser dedicated --browser-id <browser-id>`
   - 进入专用浏览器路径后，后续检查、连接、排障都继续沿用这组 dedicated 参数，不要再退回默认检查命令
 
@@ -146,33 +140,15 @@ node ./scripts/find-url.mjs [关键词...] [--only bookmarks|history] [--limit N
 
 ### 启动
 
-自动选择路径：
+三种调用形式（`provider`/`selectedMode` 等 JSON 字段含义见上文「前置检查」）：
 
 ```bash
-node ./scripts/check-deps.mjs
+node ./scripts/check-deps.mjs                                  # 自动选择：在可用连接里选，两者都可用时优先 dedicated
+node ./scripts/check-deps.mjs --browser primary                # 显式主力浏览器
+node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>  # 显式专用浏览器
 ```
 
-返回的 JSON 中：
-
-- `provider: "local"` 表示当前走的是本地 CDP 浏览器。
-- `provider: "browserbase"` 表示当前走的是 Browserbase 云浏览器。
-- `selectedMode: "primary"` 表示当前选中了主力浏览器。
-- `selectedMode: "dedicated"` 表示当前选中了专用浏览器。
-- 默认命令不是“固定走主力浏览器”，而是自动在可用连接里选择；两者都可用时优先 dedicated。
-
-显式主力浏览器路径：
-
-```bash
-node ./scripts/check-deps.mjs --browser primary
-```
-
-专用浏览器路径：
-
-```bash
-node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
-```
-
-脚本会检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。所有检查结果都在 JSON 字段里返回。
+脚本会检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。
 
 ### 何时主动切到主力浏览器
 
@@ -192,44 +168,7 @@ node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>
 
 ### Proxy API
 
-所有操作通过 curl 调用 HTTP API：
-
-```bash
-# 列出用户已打开的 tab
-curl -s http://localhost:3456/targets
-
-# 创建新后台 tab（自动等待加载）
-curl -s "http://localhost:3456/new?url=https://example.com"
-
-# 页面信息
-curl -s "http://localhost:3456/info?target=ID"
-
-# 执行任意 JS：可读写 DOM、提取数据、操控元素、触发状态变更、提交表单、调用内部方法
-curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'document.title'
-
-# 捕获页面渲染状态（含视频当前帧）
-curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
-
-# 导航、后退
-curl -s "http://localhost:3456/navigate?target=ID&url=URL"
-curl -s "http://localhost:3456/back?target=ID"
-
-# 点击（POST body 为 CSS 选择器）— JS el.click()，简单快速，覆盖大多数场景
-curl -s -X POST "http://localhost:3456/click?target=ID" -d 'button.submit'
-
-# 真实鼠标点击 — CDP Input.dispatchMouseEvent，算用户手势，能触发文件对话框
-curl -s -X POST "http://localhost:3456/clickAt?target=ID" -d 'button.upload'
-
-# 文件上传 — 直接设置 file input 的本地文件路径，绕过文件对话框
-curl -s -X POST "http://localhost:3456/setFiles?target=ID" -d '{"selector":"input[type=file]","files":["/path/to/file.png"]}'
-
-# 滚动（触发懒加载）
-curl -s "http://localhost:3456/scroll?target=ID&y=3000"
-curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"
-
-# 关闭 tab
-curl -s "http://localhost:3456/close?target=ID"
-```
+所有操作通过 curl 调用 `http://localhost:3456` 的 HTTP API：`/targets` `/new` `/info` `/navigate` `/back` `/eval`（读写 DOM、提取数据、提交表单）`/click`（JS 点击，覆盖多数场景）`/clickAt`（真实鼠标手势，能触发文件对话框）`/setFiles`（绕过文件对话框上传）`/scroll`（触发懒加载）`/screenshot`（含视频当前帧）`/close`。每个端点的完整参数、返回值、curl 示例见 `references/cdp-api.md`——做 CDP 操作前读它。
 
 ### 页面内导航
 
