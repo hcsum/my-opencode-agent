@@ -136,6 +136,8 @@ interface ActiveRun {
   lastPartFingerprint?: string;
   lastMessageSyncAtMs: number;
   loggedModel?: string;
+  currentModel?: { providerID: string; modelID: string };
+  usedFallbackModel?: boolean;
 }
 
 interface StreamEventPayload {
@@ -239,7 +241,7 @@ export class OpencodeRuntime {
     fileParts: FilePartInput[] = [],
   ): Promise<void> {
     const startedAt = Date.now();
-    const requestedModel = formatConfiguredModel(this.config.opencodeModel);
+    const requestedModel = formatConfiguredModel(run.currentModel);
     console.log(
       `[opencode-runtime] prompt dispatch thread=${run.threadId} session=${run.sessionId}${requestedModel ? ` requestedModel=${requestedModel}` : ""}`,
     );
@@ -247,7 +249,7 @@ export class OpencodeRuntime {
       await this.ensureSuccess(
         this.client.session.promptAsync({
           sessionID: run.sessionId,
-          ...(this.config.opencodeModel ? { model: this.config.opencodeModel } : {}),
+          ...(run.currentModel ? { model: run.currentModel } : {}),
           parts: [{ type: "text", text }, ...fileParts],
         }),
       );
@@ -373,6 +375,7 @@ export class OpencodeRuntime {
       lastDiagnosticAtMs: 0,
       recoveryAttempts: 0,
       lastMessageSyncAtMs: 0,
+      currentModel: this.config.opencodeModel,
     };
 
     this.activeRuns.set(meta.threadId, run);
@@ -948,6 +951,28 @@ export class OpencodeRuntime {
     if (isSessionNotFound(error)) {
       await this.sessionManager.invalidateSession(run.sessionKey);
     }
+
+    const fallback = this.config.opencodeModelFallback;
+    if (
+      isRateLimit(error) &&
+      fallback &&
+      !run.usedFallbackModel
+    ) {
+      run.usedFallbackModel = true;
+      run.currentModel = fallback;
+      const primary = formatConfiguredModel(this.config.opencodeModel) ?? "default";
+      const fallbackStr = formatConfiguredModel(fallback)!;
+      console.warn(
+        `[opencode-runtime] rate-limited on ${primary}, switching to fallback ${fallbackStr} thread=${run.threadId}`,
+      );
+      this.noteProgress(
+        run,
+        `Primary model rate-limited. Retrying with fallback model ${fallbackStr}.`,
+      );
+      await this.launchPrompt(run, run.meta.lastUserText);
+      return;
+    }
+
     await this.failRun(run.threadId, extractErrorMessage(error));
   }
 
@@ -1255,6 +1280,16 @@ function buildPublicTaskFromMeta(meta: ThreadRunRecord): PublicTaskContext {
 
 function isSessionNotFound(err: unknown): boolean {
   return err instanceof Error && err.message.includes("Session not found");
+}
+
+function isRateLimit(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const r = err as Record<string, unknown>;
+  // SDK ApiError shape: { statusCode: number, isRetryable: boolean }
+  if (r.statusCode === 429) return true;
+  // Also catch rate-limit messages from stringified errors
+  const msg = typeof r.message === "string" ? r.message : "";
+  return /rate.?limit|429|too many requests/i.test(msg);
 }
 
 function extractErrorMessage(error: unknown): string {

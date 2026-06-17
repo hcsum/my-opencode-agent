@@ -53,6 +53,7 @@ export function loadConfig(): AppConfig {
     gmailPollIntervalMs: Number(process.env.GMAIL_POLL_INTERVAL_MS) || 10000,
     gmailNewerThan: process.env.GMAIL_NEWER_THAN?.trim() || "3d",
     opencodeModel: parseModel(process.env.OPENCODE_MODEL),
+    opencodeModelFallback: parseModel(process.env.OPENCODE_MODEL_FALLBACK),
     userTimezone: process.env.USER_TIMEZONE?.trim() || "UTC",
     schedulerApiPort: Number(process.env.SCHEDULER_API_PORT) || 4097,
     schedulerMaxTasks: Number(process.env.SCHEDULER_MAX_TASKS) || 20,

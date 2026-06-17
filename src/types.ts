@@ -11,6 +11,7 @@ export interface AppConfig {
   gmailPollIntervalMs: number;
   gmailNewerThan: string;
   opencodeModel?: { providerID: string; modelID: string };
+  opencodeModelFallback?: { providerID: string; modelID: string };
   userTimezone: string;
   schedulerApiPort: number;
   schedulerMaxTasks: number;
