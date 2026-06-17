@@ -6,16 +6,17 @@ My personal AI workspace. I run [Opencode](https://github.com/anomalyco/opencode
 
 - **Skills** — a set of custom skills under `.opencode/skills/` that encode my workflows (see below)
 - **Gmail bridge** — an Opencode SDK integration that lets me send instructions by email and receive results back; the bridge also handles scheduled tasks
-- **Memory** — long-term memory via [mem0](https://github.com/mem0ai/mem0), plus a `notes/` private git repo the agent maintains for ongoing context, research results, and my personal notes
+- **Memory** — long-term memory via [mem0](https://github.com/mem0ai/mem0), plus `notes/` (see below)
+- **Notes** — a *separate* private git repo, checked out into `notes/`, that the agent and I maintain together. It holds my personal data, the agent's memory layers, research results, todos, and the LLM wiki. It's deliberately kept out of this repo: this repo is code and instructions; `notes/` is the data those instructions operate on. Its internal layout and rules live in `notes/AGENTS.md`.
 - **LLM Wiki** — an accumulating knowledge base the agent reads from and writes to over time
 
 ## Why a central repo
 
-Most of my active context lives here, not in the target repos. Research findings, ongoing work, project notes, prior experience — it's all in `notes/`. I've found myself starting almost every new task from this repo first, even when the actual code lives elsewhere, because the context is here and the skills know how to use it.
+Most of my active context lives here, not in the target repos. Research findings, ongoing work, project notes, prior experience — it's all in the `notes/` repo, checked out alongside the skills that know how to read and write it. I've found myself starting almost every new task from this repo first, even when the actual code lives elsewhere, because the context is here and the skills know how to use it.
 
 ## Some of the skills I find myself using the most
 
-**`web-access`** — a fork of the original with multi-browser support added. I can tell the agent to use my main browser (so it inherits my login sessions), a dedicated research browser, or a cloud browser (Browserbase) for headless work. This one is the backbone of most other skills.
+**`web-access`** — a fork of the original with multi-browser support added. I can tell the agent to use my main browser (so it inherits my login sessions), a dedicated research browser, or a cloud browser (Browserbase). This one is the backbone of most other skills.
 
 **`morning-report`** — pulls a daily briefing from my favorite news sources and a portfolio check. Runs on a schedule and lands in my inbox.
 
