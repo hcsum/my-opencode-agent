@@ -61,8 +61,6 @@ If little has materially changed versus the previous reports, produce a **short,
 
 The report is a news briefing and nothing else — Round 1 news plus, when warranted, the Round 2 portfolio section. Do not append anything after the news.
 
-- **Scheduled run — no mentor content:** this task fires automatically. Do not read `notes/todos.md`. Do not append a 待办 section, coaching notes, or any other non-news content. The report ends with the last news or portfolio item.
-
 - Reply in Chinese (简体) per project rules; keep English titles, product names, tickers, and code identifiers in the original.
 - Present the 3–4 selected Round 1 articles, each as:
   - the exact article title
