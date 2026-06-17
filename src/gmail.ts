@@ -694,7 +694,7 @@ export class GmailBridge {
       if (gmailThreadId) {
         upsertThreadSessionLink({
           gmailThreadId,
-          sessionKey: `scheduled-task:${payload.taskId}`,
+          sessionKey: `scheduled-task:${payload.taskId}:${payload.fireTime}`,
           sessionTitle: `Scheduled: ${payload.summary}`,
         });
       }
