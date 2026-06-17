@@ -86,7 +86,7 @@ export class ScheduledTaskExecutor {
       rfcMessageId: "",
       textBody: this.composePrompt(task),
       timestamp: new Date(fireTime),
-      sessionKey: `scheduled-task:${task.id}`,
+      sessionKey: `scheduled-task:${task.id}:${fireTime}`,
       sessionTitle: `Scheduled: ${task.summary}`,
       publicTask: buildPublicTaskContext({
         activityKey: `scheduled:${task.id}`,
