@@ -35,6 +35,8 @@ const HARD_TIMEOUT_MS = 25 * 60 * 1000;
 const POLL_INTERVAL_MS = 3000;
 const STREAM_IDLE_TIMEOUT_MS = 45000;
 const WEB_ACCESS_HANDOFF_TIMEOUT_MS = 75 * 1000;
+// How long to tolerate a session stuck in "retry" before switching to the fallback model.
+const RATE_LIMIT_FALLBACK_TIMEOUT_MS = 60 * 1000;
 const DIAGNOSTIC_LOG_INTERVAL_MS = 30 * 1000;
 const ASSISTANT_SHELL_STALL_TIMEOUT_MS = 90 * 1000;
 const BUSY_MESSAGE_SYNC_INTERVAL_MS = 15 * 1000;
@@ -138,6 +140,7 @@ interface ActiveRun {
   loggedModel?: string;
   currentModel?: { providerID: string; modelID: string };
   usedFallbackModel?: boolean;
+  retryingSinceMs?: number;
 }
 
 interface StreamEventPayload {
@@ -639,6 +642,21 @@ export class OpencodeRuntime {
         continue;
       }
 
+      if (sessionStatus === "retry") {
+        if (!run.retryingSinceMs) {
+          run.retryingSinceMs = now;
+        } else if (
+          !run.usedFallbackModel &&
+          this.config.opencodeModelFallback &&
+          now - run.retryingSinceMs > RATE_LIMIT_FALLBACK_TIMEOUT_MS
+        ) {
+          await this.switchToFallbackModel(run);
+          continue;
+        }
+      } else {
+        run.retryingSinceMs = undefined;
+      }
+
       if (sessionStatus === "busy") {
         continue;
       }
@@ -974,6 +992,51 @@ export class OpencodeRuntime {
     }
 
     await this.failRun(run.threadId, extractErrorMessage(error));
+  }
+
+  private async switchToFallbackModel(run: ActiveRun): Promise<void> {
+    const fallback = this.config.opencodeModelFallback!;
+    run.usedFallbackModel = true;
+    run.currentModel = fallback;
+    run.retryingSinceMs = undefined;
+    const primary = formatConfiguredModel(this.config.opencodeModel) ?? "default";
+    const fallbackStr = formatConfiguredModel(fallback)!;
+    console.warn(
+      `[opencode-runtime] session stuck in retry for ${RATE_LIMIT_FALLBACK_TIMEOUT_MS / 1000}s on ${primary}, aborting and switching to fallback ${fallbackStr} thread=${run.threadId}`,
+    );
+    this.noteProgress(
+      run,
+      `Primary model rate-limited. Switching to fallback model ${fallbackStr}.`,
+    );
+    try {
+      await this.ensureSuccess(
+        this.client.session.abort({ sessionID: run.sessionId }),
+      ).catch(() => undefined);
+      await this.sessionManager.invalidateSession(run.sessionKey);
+      const sessionId = await this.sessionManager.getOrCreateSessionId({
+        channel: run.threadId.startsWith("scheduled-task:") ? "scheduler" : "gmail",
+        sessionKey: run.sessionKey,
+        sessionTitle: run.meta.subject,
+      });
+      const now = Date.now();
+      this.sessionToThread.delete(run.sessionId);
+      run.sessionId = sessionId;
+      run.startedAtMs = now;
+      run.updatedAtMs = now;
+      run.lastProgressAtMs = now;
+      run.lastMessageSyncAtMs = 0;
+      run.latestAssistantMessageId = undefined;
+      run.latestAssistantCreatedAt = undefined;
+      run.lastPartMessageId = undefined;
+      run.lastPartFingerprint = undefined;
+      run.meta = { ...run.meta, sessionId, startedAtMs: now, updatedAtMs: now, lastError: "" };
+      this.clearPendingAssistantShell(run);
+      this.sessionToThread.set(sessionId, run.threadId);
+      upsertThreadRun(run.meta);
+      await this.launchPrompt(run, run.meta.lastUserText);
+    } catch (error) {
+      await this.failRun(run.threadId, `Fallback model switch failed: ${extractErrorMessage(error)}`);
+    }
   }
 
   private async requireRun(
