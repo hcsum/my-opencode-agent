@@ -12,6 +12,12 @@ import { dirname, join } from "node:path";
 // don't want to phone home. Overridable via the real env if ever needed.
 process.env.MEM0_TELEMETRY ??= "false";
 
+// Silence dotenv@17's promotional "injected env (N) … // tip: …" banner. mem0ai
+// pulls in `natural`, which calls dotenv.config() at import time; v17 logs that
+// line (with rotating ad tips) by default, and it leaks into the opencode TUI.
+// dotenv reads this before logging, and we set it before mem0ai loads.
+process.env.DOTENV_CONFIG_QUIET ??= "true";
+
 // Route Node's global `fetch` (undici) through the proxy. mem0's Gemini client
 // (embeddings + extraction LLM) uses global fetch, which — unlike curl or the
 // OS — does NOT honor HTTP(S)_PROXY env vars. On a network where direct egress
