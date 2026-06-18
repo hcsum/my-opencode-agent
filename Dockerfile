@@ -27,5 +27,12 @@ RUN npm ci
 # Copy source and build
 COPY . .
 
+# Install the .opencode plugin deps (mem0ai etc). These live in a separate
+# package (.opencode/package.json) that the root `npm ci` above does not touch,
+# and node_modules/ is .dockerignore'd — so without this step the mem0-memory
+# plugin fails to load at runtime ("Cannot find module 'mem0ai/oss'") and no
+# memory is ever written. npm ci builds it fresh from .opencode/package-lock.json.
+RUN cd .opencode && npm ci
+
 # Default command (overridden by docker-compose per service)
 CMD ["npm", "start"]
