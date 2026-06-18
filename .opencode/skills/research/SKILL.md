@@ -21,7 +21,7 @@ This skill orchestrates; the actual networking is done through other skills. Loa
 
 ## Method
 
-Follow the global "When doing research" guidance in `AGENTS.md` (broad→narrow, one modifier at a time, try aliases/variants/misspellings, multiple rounds, rewrite weak queries instead of stopping). On top of it:
+Core search-query discipline: go broad→narrow (add one modifier at a time), rewrite weak/empty/off-target queries instead of stopping (try aliases, abbreviations, alternate wording, common misspellings; do multiple rounds), and stop once the answer is clear or signal quality is established. On top of that:
 
 1. **Start broad, then narrow.** Open with the core entity/topic in plain terms. Only add modifiers once you see what the broad pass returns. Don't open with a hyper-specific query unless the user already gave a narrow target.
 2. **Spread across the three sources by default** (Google + Reddit + X). They surface different things — articles vs. community threads vs. live takes. Don't conclude from a single source unless the others genuinely have nothing.

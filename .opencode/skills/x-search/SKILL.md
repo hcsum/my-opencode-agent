@@ -25,19 +25,19 @@ printf '%s' '{"query":"<query>","limit":20}' | npx tsx .opencode/skills/x-search
 
 ## Search workflow
 
-Follow the global search guidance in `AGENTS.md`, then apply these X-specific rules:
+Apply the core search-query discipline — start broad and add modifiers one at a time, rewrite weak/empty/off-target queries instead of stopping (try aliases, abbreviations, alternate wording, common misspellings; do multiple rounds), and stop once the answer is clear — then layer these X-specific rules:
 
 1. Prefer X-native query forms when useful
    - Shift between topic words, company names, hashtags, cashtags, and user handles.
    - Use the shortest X-native form that is likely to surface the right conversation.
 
-5. Prioritize signal, not just matches
+2. Prioritize signal, not just matches
    - Prefer posts with meaningful engagement when choosing what to cite or trust most.
    - Treat likes, reposts, replies, and quote-post discussion as rough signal, not proof.
    - If the strongest-looking matches have very low engagement, say so explicitly and lower confidence.
    - Do not draw broad conclusions from a handful of low-engagement posts unless the user asked for niche or early signal.
 
-6. Filter out garbage and duplicates
+3. Filter out garbage and duplicates
    - Watch for near-duplicate posts, copy-paste summaries, and engagement-farming threads.
    - If many posts are 80% identical, treat them as one repeated claim, not independent confirmation.
    - Prefer original posts, firsthand examples, or replies with concrete reasoning over reposted framing.
