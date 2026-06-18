@@ -168,6 +168,10 @@ interface TextPartEvent {
 export class OpencodeRuntime {
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly sessionToThread = new Map<string, string>();
+  // Cache of `${providerID}/${modelID}` -> context window size, populated lazily
+  // from config.providers() so the context-usage footer can show a percentage.
+  private readonly modelContextLimits = new Map<string, number>();
+  private modelContextLimitsLoaded = false;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private streamWatchdog: ReturnType<typeof setInterval> | null = null;
   private streamAbort?: AbortController;
@@ -675,7 +679,7 @@ export class OpencodeRuntime {
       this.noteProgress(run, "Recovered terminal assistant message from message sync.");
       this.trackAssistant(run, latest.info);
       this.clearPendingAssistantShell(run);
-      await this.completeRun(run, collectMessageText(latest.parts), latest.info.error);
+      await this.completeRun(run, collectMessageText(latest.parts), latest.info.error, latest.info);
       return true;
     }
 
@@ -728,7 +732,7 @@ export class OpencodeRuntime {
 
     this.noteProgress(run, "Terminal assistant message detected.");
     this.trackAssistant(run, latest.info);
-    await this.completeRun(run, collectMessageText(latest.parts), latest.info.error);
+    await this.completeRun(run, collectMessageText(latest.parts), latest.info.error, latest.info);
   }
 
   private trackAssistant(run: ActiveRun, info: AssistantMessage): void {
@@ -762,20 +766,33 @@ export class OpencodeRuntime {
     this.maybeLogUsedModel(run, response.info);
     this.noteProgress(run, "Assistant produced terminal response.");
     this.clearPendingAssistantShell(run);
-    await this.completeRun(run, collectMessageText(response.parts), response.info.error);
+    await this.completeRun(
+      run,
+      collectMessageText(response.parts),
+      response.info.error,
+      response.info as AssistantMessage,
+    );
   }
 
   private async completeRun(
     run: ActiveRun,
     text: string,
     error?: unknown,
+    info?: AssistantMessage,
   ): Promise<void> {
     if (run.finalizing) return;
     run.finalizing = true;
 
     const isError = Boolean(error);
     const errorMessage = error ? extractErrorMessage(error) : "";
-    const finalText = text.trim() || "No response text returned.";
+    let finalText = text.trim() || "No response text returned.";
+
+    if (!isError && info) {
+      const footer = await this.buildContextUsageFooter(info);
+      if (footer) {
+        finalText = `${finalText}\n\n—\n${footer}`;
+      }
+    }
 
     try {
       if (isError) {
@@ -818,6 +835,60 @@ export class OpencodeRuntime {
       this.publicActivity.setIdleIfNoActiveRuns();
     }
     await run.callbacks.onTerminal();
+  }
+
+  // Render a one-line context-usage footer for the reply email from the terminal
+  // assistant message's token counts. input + cache.read + cache.write + output is
+  // everything that occupies the context window going into the next turn.
+  private async buildContextUsageFooter(info: AssistantMessage): Promise<string> {
+    const tokens = info.tokens;
+    if (!tokens) return "";
+    const used =
+      tokens.input + tokens.output + tokens.cache.read + tokens.cache.write;
+    if (used <= 0) return "";
+
+    const limit = await this.getModelContextLimit(info.providerID, info.modelID);
+    if (limit && limit > 0) {
+      const pct = Math.round((used / limit) * 100);
+      return `Context: ${formatTokenCount(used)} / ${formatTokenCount(limit)} tokens (${pct}%)`;
+    }
+    return `Context: ${formatTokenCount(used)} tokens`;
+  }
+
+  private async getModelContextLimit(
+    providerID: string,
+    modelID: string,
+  ): Promise<number | undefined> {
+    const key = `${providerID}/${modelID}`;
+    const cached = this.modelContextLimits.get(key);
+    if (cached !== undefined) return cached;
+    if (this.modelContextLimitsLoaded) return undefined;
+
+    this.modelContextLimitsLoaded = true;
+    try {
+      const result = await this.unwrap<{
+        providers: Array<{
+          id: string;
+          models: Record<string, { limit?: { context?: number } }>;
+        }>;
+      }>(this.client.config.providers());
+      for (const provider of result.providers) {
+        for (const [id, model] of Object.entries(provider.models)) {
+          const context = model.limit?.context;
+          if (typeof context === "number" && context > 0) {
+            this.modelContextLimits.set(`${provider.id}/${id}`, context);
+          }
+        }
+      }
+    } catch (error) {
+      // Fall back to the bare token count if provider metadata is unavailable.
+      this.modelContextLimitsLoaded = false;
+      console.error(
+        "[opencode-runtime] failed to load model context limits",
+        error,
+      );
+    }
+    return this.modelContextLimits.get(key);
   }
 
   private maybeLogUsedModel(run: ActiveRun, source: unknown): void {
@@ -1438,6 +1509,11 @@ function buildIdleTimeoutMessage(
 function truncateForLog(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength - 3)}...`;
+}
+
+function formatTokenCount(count: number): string {
+  if (count < 1000) return `${count}`;
+  return `${(count / 1000).toFixed(1)}K`;
 }
 
 function formatDuration(durationMs: number): string {
