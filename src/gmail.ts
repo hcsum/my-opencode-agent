@@ -1061,6 +1061,9 @@ function markdownToHtml(markdown: string): string {
   let inList = false;
   let inCodeBlock = false;
   let codeLines: string[] = [];
+  // Raw HTML tables emitted by the model must reach the email verbatim. Without
+  // this passthrough every `<table>` line is escaped and renders as plain text.
+  let inTable = false;
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
@@ -1099,6 +1102,24 @@ function markdownToHtml(markdown: string): string {
 
     if (inCodeBlock) {
       codeLines.push(line);
+      continue;
+    }
+
+    if (inTable) {
+      html.push(line);
+      if (/<\/table>/i.test(trimmed)) {
+        inTable = false;
+      }
+      continue;
+    }
+
+    if (/^<table[\s>]/i.test(trimmed)) {
+      flushParagraph();
+      closeList();
+      html.push(line);
+      if (!/<\/table>/i.test(trimmed)) {
+        inTable = true;
+      }
       continue;
     }
 
