@@ -1,6 +1,8 @@
 {
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/plugin": "1.4.8",
-    "mem0ai": "^3.0.8"
+    "mem0ai": "^3.0.8",
+    "undici": "^6.26.0"
   }
 }

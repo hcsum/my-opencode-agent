@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mem0": {
+      "command": "npx",
+      "args": ["tsx", ".opencode/lib/mem0-claude-mcp.ts"]
+    }
+  }
+}

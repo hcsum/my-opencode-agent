@@ -3,6 +3,7 @@
 // is preserved, so importing this first reliably wins.)
 
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
 // Disable mem0's PostHog telemetry + "notice flag" network calls. They are
@@ -10,6 +11,23 @@ import { dirname, join } from "node:path";
 // if PostHog egress is slow/blocked they stall memory writes. We also just
 // don't want to phone home. Overridable via the real env if ever needed.
 process.env.MEM0_TELEMETRY ??= "false";
+
+// Route Node's global `fetch` (undici) through the proxy. mem0's Gemini client
+// (embeddings + extraction LLM) uses global fetch, which — unlike curl or the
+// OS — does NOT honor HTTP(S)_PROXY env vars. On a network where direct egress
+// to Google is blocked behind a local proxy, every add()/search() then dies
+// with "TypeError: fetch failed" (connect timeout to Google's IPs), silently
+// disabling memory. EnvHttpProxyAgent reads HTTP_PROXY/HTTPS_PROXY/NO_PROXY, so
+// it proxies Gemini while leaving local Qdrant (NO_PROXY=localhost) direct. No
+// proxy set → it's a passthrough no-op, so this is safe everywhere (incl. VPS).
+try {
+  if (process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy) {
+    const { setGlobalDispatcher, EnvHttpProxyAgent } = createRequire(import.meta.url)("undici");
+    setGlobalDispatcher(new EnvHttpProxyAgent());
+  }
+} catch {
+  // undici unavailable / API changed → leave the default dispatcher in place.
+}
 
 // Load the project `.env` into process.env for keys the plugin needs, IF they
 // aren't already set. opencode loads plugins in its own process and does NOT

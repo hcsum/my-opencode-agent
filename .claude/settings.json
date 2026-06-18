@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx tsx .opencode/lib/mem0-claude-hook.ts",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

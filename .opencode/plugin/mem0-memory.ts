@@ -4,6 +4,7 @@ import path from "node:path";
 import { type Plugin, tool } from "@opencode-ai/plugin";
 
 import { getMemory, USER_ID, COLLECTION, QDRANT_URL } from "../lib/mem0-client";
+import { detectKeyword, runExtraction, type NormMsg } from "../lib/mem0-extract";
 
 /**
  * mem0-backed long-term memory plugin (replaces memory.ts). See
@@ -27,7 +28,6 @@ import { getMemory, USER_ID, COLLECTION, QDRANT_URL } from "../lib/mem0-client";
  * sync diffs it. The snapshot is disposable — mem0/Qdrant is the store of record.
  */
 
-const WATERMARK_REL = ".data/memory-extract-watermark.json";
 const SNAPSHOT_REL = "notes/memory/SNAPSHOT.md";
 const CONFLICTS_REL = "notes/memory/CONFLICTS.md";
 
@@ -37,9 +37,6 @@ const DEBOUNCE_MS = Number(process.env.MEMORY_EXTRACT_DEBOUNCE_MS) || 60_000;
 // Short, but long enough for the triggering message to persist before we read it.
 const KEYWORD_DEBOUNCE_MS = Number(process.env.MEMORY_KEYWORD_DEBOUNCE_MS) || 5_000;
 const EXTRACT_ENABLED = process.env.MEMORY_EXTRACT_ENABLED !== "0";
-const MAX_NEW_MESSAGES = 40;
-const MAX_TRANSCRIPT_CHARS = 24_000;
-const MIN_TRANSCRIPT_CHARS = 40;
 
 // Snapshot cadence: rewrite after this many adds, or once this long has passed.
 const SNAPSHOT_CHURN = Number(process.env.MEMORY_SNAPSHOT_CHURN) || 5;
@@ -84,14 +81,8 @@ If the store is already clean, output exactly: []`;
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
-const KEYWORD_RE =
-  /(记住|记一下|记下|存一下|帮我记|remember (this|that)|save this|note this down|don'?t forget)/i;
-const CODE_BLOCK_RE = /```[\s\S]*?```/g;
-const INLINE_CODE_RE = /`[^`]+`/g;
-
 export const Mem0MemoryPlugin: Plugin = async (ctx) => {
   const root = ctx.directory;
-  const watermarkPath = path.join(root, WATERMARK_REL);
   const snapshotPath = path.join(root, SNAPSHOT_REL);
 
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -126,21 +117,6 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
 
   // ---- state ------------------------------------------------------------
 
-  function readWatermarks(): Record<string, string> {
-    try {
-      return JSON.parse(fs.readFileSync(watermarkPath, "utf8"));
-    } catch {
-      return {};
-    }
-  }
-
-  function writeWatermark(sessionID: string, lastMessageID: string) {
-    const all = readWatermarks();
-    all[sessionID] = lastMessageID;
-    fs.mkdirSync(path.dirname(watermarkPath), { recursive: true });
-    fs.writeFileSync(watermarkPath, JSON.stringify(all, null, 2));
-  }
-
   function messageText(
     parts: Array<{ type?: string; text?: string; synthetic?: boolean; ignored?: boolean }>,
   ): string {
@@ -149,11 +125,6 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
       .map((p) => p.text!.trim())
       .filter(Boolean)
       .join("\n");
-  }
-
-  function detectKeyword(text: string): boolean {
-    const stripped = text.replace(CODE_BLOCK_RE, "").replace(INLINE_CODE_RE, "");
-    return KEYWORD_RE.test(stripped);
   }
 
   // ---- maintenance: drop assistant-attributed memories ------------------
@@ -340,58 +311,31 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
         query: { directory: root },
       });
       const all = (res.data ?? []) as Array<{ info: { id: string; role: string }; parts: any[] }>;
-      if (all.length === 0) return;
 
-      const watermarks = readWatermarks();
-      const last = watermarks[sessionID];
-      let startIdx = 0;
-      if (last) {
-        const found = all.findIndex((m) => m.info.id === last);
-        startIdx = found >= 0 ? found + 1 : Math.max(0, all.length - MAX_NEW_MESSAGES);
-      }
-      const fresh = all.slice(startIdx).slice(-MAX_NEW_MESSAGES);
-      const latestID = all[all.length - 1].info.id;
-      if (fresh.length === 0) {
-        writeWatermark(sessionID, latestID);
-        return;
-      }
+      // Normalize opencode's messages; the watermark/slicing/add behavior is the
+      // shared core in mem0-extract.ts (mirrored by the Claude Code Stop hook).
+      const messages: NormMsg[] = all.map((m) => ({
+        id: m.info.id,
+        role: m.info.role,
+        text: messageText(m.parts),
+      }));
 
-      const transcript = fresh
-        .map((m) => {
-          const t = messageText(m.parts);
-          return t ? `### ${m.info.role}\n${t}` : "";
-        })
-        .filter(Boolean)
-        .join("\n\n")
-        .slice(-MAX_TRANSCRIPT_CHARS);
-
-      if (transcript.trim().length < MIN_TRANSCRIPT_CHARS) {
-        writeWatermark(sessionID, latestID);
-        return;
-      }
-
-      const mem = getMemory();
-      if (!mem) return; // memory disabled (no key / init failed); leave watermark unmoved to retry later
-
-      // Cleared only once we're actually committing the add, so an early-return
-      // (no fresh messages) preserves the explicit flag for the next run.
-      const source = pendingExplicit.delete(sessionID) ? "explicit" : "auto-idle";
-
-      await mem.add(transcript, {
-        userId: USER_ID,
-        // NOTE: session id goes in metadata, NOT runId. mem0 uses run_id as a
-        // hard retrieval scope, so a per-session runId silos dedup per session
-        // and lets the same fact ("likes donuts") re-accumulate across sessions.
-        // Long-term user memory is one pool keyed by user_id; sessionId is
-        // provenance-only metadata.
-        metadata: { source, sessionId: sessionID },
-        infer: true,
+      const result = await runExtraction({
+        root,
+        sessionID,
+        messages,
+        runtime: "opencode",
+        // Cleared only when actually committing the add, so an early return
+        // (no fresh messages) preserves the explicit flag for the next run.
+        consumeExplicit: () => pendingExplicit.delete(sessionID),
       });
-      writeWatermark(sessionID, latestID);
-      addsSinceSnapshot++;
-      addsSinceCompact++;
-      await maybeSnapshot();
-      await maybeCompact();
+
+      if (result.status === "added") {
+        addsSinceSnapshot++;
+        addsSinceCompact++;
+        await maybeSnapshot();
+        await maybeCompact();
+      }
     } catch (err) {
       await logError("extract error", { sessionID, err: String(err) });
     } finally {
