@@ -25,6 +25,10 @@ services:
       - GMAIL_MCP_DIR=/workspace/.gmail-mcp
       # Reach Qdrant over the compose network (service DNS), not localhost.
       - QDRANT_URL=http://qdrant:6333
+      # Per-agent slug for the generated memory audit files. The VPS keeps a
+      # separate Qdrant store from the local agent but shares the notes/ repo,
+      # so each writes its own SNAPSHOT.<id>.md to avoid sync merge conflicts.
+      - MEM0_AGENT_ID=vps
       - BRIDGE_DISABLE_LOCK=true
       - BROWSERBASE_REGION=ap-southeast-1
       - GMAIL_NEWER_THAN=10m

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { type Plugin, tool } from "@opencode-ai/plugin";
@@ -23,13 +24,28 @@ import { detectKeyword, runExtraction, type NormMsg } from "../lib/mem0-extract"
  *     routes that message straight to mem0 immediately.
  *   - `session.deleted` flushes any pending extraction for that session.
  *
- * Audit: a one-way `notes/memory/SNAPSHOT.md` is regenerated from `getAll()` on
- * write churn / interval, so the store stays greppable and the notes repo's
- * sync diffs it. The snapshot is disposable — mem0/Qdrant is the store of record.
+ * Audit: a one-way `notes/memory/SNAPSHOT.<agent>.md` is regenerated from
+ * `getAll()` on write churn / interval, so the store stays greppable and the
+ * notes repo's sync diffs it. The snapshot is disposable — mem0/Qdrant is the
+ * store of record.
+ *
+ * Per-agent filename: the local and VPS agents share the `notes/` git repo but
+ * keep SEPARATE Qdrant stores, so a single shared SNAPSHOT.md was overwritten
+ * with divergent content by each side → constant merge conflicts on sync. The
+ * file is namespaced by AGENT_ID (env `MEM0_AGENT_ID`, else hostname) so each
+ * agent owns its own snapshot/conflicts file and they never collide. Same for
+ * the compaction CONFLICTS file.
  */
 
-const SNAPSHOT_REL = "notes/memory/SNAPSHOT.md";
-const CONFLICTS_REL = "notes/memory/CONFLICTS.md";
+// Stable per-agent slug so the two agents (local mac / VPS) write to distinct
+// generated files instead of fighting over one shared path.
+const AGENT_ID = (process.env.MEM0_AGENT_ID || os.hostname() || "local")
+  .replace(/[^a-zA-Z0-9_-]+/g, "-")
+  .replace(/^-+|-+$/g, "")
+  .toLowerCase() || "local";
+
+const SNAPSHOT_REL = `notes/memory/SNAPSHOT.${AGENT_ID}.md`;
+const CONFLICTS_REL = `notes/memory/CONFLICTS.${AGENT_ID}.md`;
 
 const DEBOUNCE_MS = Number(process.env.MEMORY_EXTRACT_DEBOUNCE_MS) || 60_000;
 // A "记住/remember" keyword fires the SAME extractor early (short debounce)
