@@ -251,7 +251,7 @@ mem0 会偶尔把助手自己的话写成 memory，并带 `attributedTo: "assist
 
 当前只能通过 prompt 明确压住：
 
-- 只允许 atomic fact 级别 rewrite / merge
+- 现在默认不允许 merge；只允许 delete / rewrite / flag
 - 不允许揉成人物画像
 - 不允许写时间线
 - 不允许加解释、原因、背景
@@ -260,6 +260,7 @@ mem0 会偶尔把助手自己的话写成 memory，并带 `attributedTo: "assist
 
 - 现在 compaction 只能做保守维护
 - 不能当知识整理器用
+- 即使模型吐出 `merge`，执行层也会忽略，不让它落地
 
 ## 为什么轻量 Gemini 还够用
 
@@ -298,7 +299,7 @@ mem0 会偶尔把助手自己的话写成 memory，并带 `attributedTo: "assist
 1. `getAll({ user_id })`
 2. 把全库列成编号文本
 3. 单次 Gemini 调用拿回操作数组
-4. 应用 `merge / delete / rewrite / flag`
+4. 只应用 `delete / rewrite / flag`；`merge` 会被忽略并打日志
 5. 强制 snapshot
 
 ### 硬边界
@@ -307,6 +308,7 @@ mem0 会偶尔把助手自己的话写成 memory，并带 `attributedTo: "assist
 2. 进程重启会丢计数器。
 3. 本地临时 TUI 不要指望 compaction 稳定触发。
 4. 它只能做“保守清理”，不能做“智能总结”。
+5. 当前策略下，它本质上已经接近“清扫垃圾 + 轻微改写”，不是“合并知识”。
 
 ### 现阶段为什么不重做
 

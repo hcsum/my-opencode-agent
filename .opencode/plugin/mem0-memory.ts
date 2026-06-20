@@ -78,9 +78,6 @@ You receive the full memory store as a numbered list (each entry: integer ID + f
 Be CONSERVATIVE. This store is the assistant's durable knowledge about the user; wrongly deleting or merging loses real information. Prefer keeping over losing.
 
 Operations (output ONLY a JSON array, no prose, no markdown fence):
-- Merge near-duplicates that state the SAME fact across different entries:
-  {"action":"merge","sources":[0,2],"text":"the merged fact text"}
-  (creates a new entry with the merged text, then deletes every entry in sources)
 - Delete a memory that is clearly stale or fully superseded by another:
   {"action":"delete","id":1,"reason":"superseded by id 3"}
 - Rewrite a single entry in place to tighten or correct it (keep same fact, better wording):
@@ -89,8 +86,7 @@ Operations (output ONLY a JSON array, no prose, no markdown fence):
   {"action":"flag","ids":[0,3],"note":"contradict on X — user must resolve"}
 
 HARD RULES:
-- Only merge when the facts are unmistakably the SAME. Different facts about the same topic stay separate.
-- Only merge if the merged result is still ONE atomic fact. If combining them would create a profile, explanation, timeline, or multi-fact summary, do NOT merge.
+- NEVER use merge. This compaction pass is not allowed to create new synthesized facts from multiple entries.
 - Only delete when clearly stale or fully superseded. If unsure, keep it.
 - For a contradiction where you cannot determine current truth, use "flag" — NEVER "delete" one side on a guess.
 - Never preserve or generate operational/episodic memories such as "User asked/instructed/committed/debugged...", assistant plans, deliverable summaries, dated event recaps, or system/debug state. Prefer deleting those over rewriting them.
@@ -269,19 +265,14 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
         return;
       }
 
-      const stats = { merged: 0, deleted: 0, rewritten: 0, flagged: 0, errors: 0 };
+      const stats = { mergedIgnored: 0, deleted: 0, rewritten: 0, flagged: 0, errors: 0 };
       const flags: string[] = [];
 
       for (const op of ops) {
         try {
           if (op.action === "merge" && Array.isArray(op.sources) && op.text) {
-            // Add merged entry first, then delete sources.
-            await mem.add(op.text, { userId: USER_ID, metadata: { source: "compaction" }, infer: false });
-            for (const idx of op.sources) {
-              const uuid = idxToUUID[idx];
-              if (uuid) await mem.delete(uuid);
-            }
-            stats.merged++;
+            await log("warn", "compact: merge ignored", { sources: op.sources, text: op.text });
+            stats.mergedIgnored++;
           } else if (op.action === "delete" && typeof op.id === "number") {
             const uuid = idxToUUID[op.id];
             if (uuid) { await mem.delete(uuid); stats.deleted++; }
