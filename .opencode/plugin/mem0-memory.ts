@@ -90,8 +90,12 @@ Operations (output ONLY a JSON array, no prose, no markdown fence):
 
 HARD RULES:
 - Only merge when the facts are unmistakably the SAME. Different facts about the same topic stay separate.
+- Only merge if the merged result is still ONE atomic fact. If combining them would create a profile, explanation, timeline, or multi-fact summary, do NOT merge.
 - Only delete when clearly stale or fully superseded. If unsure, keep it.
 - For a contradiction where you cannot determine current truth, use "flag" — NEVER "delete" one side on a guess.
+- Never preserve or generate operational/episodic memories such as "User asked/instructed/committed/debugged...", assistant plans, deliverable summaries, dated event recaps, or system/debug state. Prefer deleting those over rewriting them.
+- Never add background rationale, examples, or "why" context to a fact. Keep wording short and literal.
+- Never turn several related facts into one abstract characterization.
 - Use only the integer IDs from the input. Never reference IDs not in the list.
 If the store is already clean, output exactly: []`;
 

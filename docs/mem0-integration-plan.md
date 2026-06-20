@@ -1,211 +1,360 @@
-# mem0 Integration — Pikachū auto-memory layer
+# mem0 集成方案：Pikachu 的自动记忆层
 
-> Status: IMPLEMENTED & WORKING. Reflects the as-built state (updated after the
-> Gemini switch + quality refinements). One optional piece remains — see
-> "Open items: compaction" at the bottom.
+> 状态：已实现，仍在收紧规则。
 >
-> Scope: replaces the `.opencode/plugin/memory.ts` auto-memory layer
-> (`notes/memory/`) ONLY. Everything else under `notes/` (knowledge/, todos.md,
-> user.md, credentials/, my-files/, seo/) is OUT OF SCOPE and untouched.
+> 这份文档只记录真正影响后续维护的东西：当前实现、为什么这么做、已知妥协、不要再走的岔路。
+>
+> 作用域：只替换 `.opencode/plugin/memory.ts` 这一层自动记忆。`notes/knowledge/`、`todos.md`、`user.md`、`credentials/` 等都不归这里管。
 
-## Why
+## 目标
 
-The old `notes/memory/` layer (`memory.ts`) had two problems:
+要解决两个问题：
 
-1. **Bad writes** — the background extractor stored task-episodic junk.
-2. **Context bloat** — recall = the *entire* `MEMORY.md` index (~9.7 KB) loaded into
-   EVERY session via `instructions`, growing O(n) with the store.
+1. 老的 markdown memory 会把任务过程、一次性修正、助手自己的话写进去，垃圾很多。
+2. 老方案把整个 `MEMORY.md` 常驻注入上下文，记忆越多，上下文越肿。
 
-mem0's `search(query)` fixes #2 (retrieve only relevant memories per request, pull-based).
-#1 is addressed by a custom low-recall extraction gate + an assistant-attribution prune
-(see below); residual *overlap* is left to a future compaction pass.
+当前方案优先解决：
 
-## Current architecture (as built)
+- 召回按需检索，不再全量注入。
+- 自动记忆仍保留，但尽量收紧，只记少数耐久事实。
 
-| Concern | Choice |
+不追求的目标：
+
+- 现在不做“完美 memory 架构”。
+- 现在不做 file-truth 重构。
+- 现在不做 silent background prompt 复用主会话 OAuth。
+
+## 现状一句话
+
+当前实现是：
+
+- `session.idle` / `session.deleted` / 显式 `记住` 触发
+- 读取该 session 自上次 watermark 之后的新消息
+- 拼成 transcript
+- 调 `mem.add(... infer:true)`
+- 让 mem0 的 LLM 决定要不要记、记成什么
+- 再加一层我们自己的 gate 和确定性清理，尽量删掉脏 memory
+
+所以这不是“原文切块索引”，也不是“文件 truth layer”。
+它本质上仍然是 **LLM-extracted memory**，只是现在靠规则把它往保守方向压。
+
+## 这次定下来的路线
+
+先不推翻当前架构，继续走 mem0 这条线，但只做两类改进：
+
+1. 收紧 extraction 规则。
+2. 收紧 compaction 规则，并加确定性兜底。
+
+不做的事：
+
+1. 不改成 `infer:false` 存原文。
+原因：那样 mem0 基本只剩 vector store 包装层，价值不大，而且要自己补 worth-saving 判定。
+
+2. 不改成“文件为 truth，Qdrant 为索引”的大重构。
+原因：方向更稳，但现在成本偏大，先把现有自动记忆收敛到可用。
+
+3. 不尝试从 OpenCode 当前主会话里偷偷再发一轮背景 prompt。
+原因：当前主对话走的是 OpenAI OAuth，不是 API key。插件侧没有干净、稳定、可维护的 sidecar 复用路径。继续硬挖，九成会变成 agent 自身配置折腾。
+
+## 为什么不直接改成原文存储
+
+我们讨论过一轮，结论是：
+
+- `infer:false` 可以直接存原文，这点 mem0 源码明确支持。
+- 但一旦这样做，“值不值得记”和“到底记哪段原文”都要自己解决。
+- 如果这两件事也自己做，mem0 就只剩 embedding + vector CRUD + 一点 metadata 封装，护城河不深。
+
+所以当前阶段的取舍是：
+
+- 还保留 LLM 参与“是否值得记”和“如何措辞”。
+- 但不再假设它写出来的东西天然可信。
+- 规则层和写入后清理层必须拦它。
+
+## 当前架构
+
+| 关注点 | 当前选择 |
 |---|---|
-| Vector store | **Qdrant** (docker), collection `pikachu_memory` (+ `pikachu_memory_entities`), 1536-dim |
-| Embeddings | **Gemini** `gemini-embedding-001` (`embeddingDims: 1536`) |
-| Extraction LLM | **Gemini** `gemini-2.5-flash` (via `MEM0_LLM_MODEL`; code default `gemini-2.5-flash-lite`) |
-| API key | single **`GOOGLE_API_KEY`** (no OpenAI) |
-| History | mem0 SQLite history **disabled**; Qdrant + `SNAPSHOT.md` are the audit trail |
+| 向量库 | Qdrant，collection `pikachu_memory` |
+| embeddings | Gemini `gemini-embedding-001`，1536 维 |
+| 抽取模型 | Gemini `gemini-2.5-flash-lite` 默认，可被 `MEM0_LLM_MODEL` 覆盖 |
+| 认证 | 只用 `GOOGLE_API_KEY`，不依赖主会话的 OpenAI OAuth |
+| 历史库 | mem0 自带 SQLite history 关闭 |
+| 召回方式 | `search_memories` 工具，pull-based |
+| 真正 store of record | 仍是 mem0/Qdrant，不是 notes 文件 |
 
-### Write path (single writer)
-- ONE writer: `extract(sessionID)` in `mem0-memory.ts`. It reads new messages since the
-  per-session watermark and calls `mem.add(transcript, { userId, metadata, infer:true })`.
-- **`infer:true`** → mem0's own LLM extraction (high-recall base prompt) **biased by our
-  low-recall gate** passed as `customInstructions` (see below).
-- **Triggers** (both fire the SAME `extract()`, never a second independent add):
-  - `session.idle` → `scheduleExtract` (60s debounce).
-  - `session.deleted` → immediate flush.
-  - Explicit `记住/remember` keyword in `chat.message` → fires `extract()` early via a short
-    5s debounce (`MEMORY_KEYWORD_DEBOUNCE_MS`) and tags the batch `source:"explicit"`.
-  - This single-writer design is what eliminated the explicit/idle **double-write race**.
+## 触发与写入
 
-### Read path (pull-based)
-- `search_memories` **tool** the model calls on demand. `mem.search(query, { user_id })`,
-  top-K (default 5). Nothing is auto-injected; the store can grow without inflating context.
-- `notes/memory/MEMORY.md` was removed from `instructions` (fixes context bloat).
+### 单一写入器
 
-### Provenance & scoping (IMPORTANT)
-- Everything is scoped to **`userId` only**. The session id is stored as
-  **`metadata.sessionId`**, NOT as `runId`.
-- Why: mem0 uses `run_id` as a *hard retrieval filter* for dedup-on-add, so a per-session
-  `runId` silos dedup per session and lets the same fact re-accumulate across sessions
-  (the original "donut ×3" bug). One user pool keyed by `user_id` lets dedup see prior facts.
+只有一个写入入口：`.opencode/plugin/mem0-memory.ts` 里的 `extract(sessionID)`。
 
-### mem0 payload reference (each Qdrant point)
-`{ ...metadata (source, sessionId), data: <fact text>, textLemmatized, hash, createdAt,
-updatedAt, user_id, attributedTo? }`. The fact text is readable in `data`, so the Qdrant
-dashboard (localhost:6333/dashboard) and `getAll()` are browsable. mem0 does NOT auto-store
-source/message-id provenance — we inject `source`/`sessionId` ourselves.
+它做的事：
 
-## Quality controls
+1. 读当前 session 的消息历史。
+2. 根据该 session 的 watermark 只取未处理的新消息。
+3. 拼成 transcript。
+4. 调 `runExtraction()`。
+5. `runExtraction()` 里再调 `mem.add(... infer:true)`。
 
-### Extraction gate (low-recall) — `customInstructions`
-- mem0's built-in extraction prompt (`ADDITIVE_EXTRACTION_PROMPT`, compiled into
-  `node_modules/mem0ai/dist/oss/index.mjs`) is **high-recall by design** ("sole operation is
-  ADD", "extract every piece", "extract assistant recommendations as 'User was recommended X'")
-  and is **not config-overridable**.
-- We counter it with an external gate file **`.opencode/memory/EXTRACTION_GATE.md`**, loaded by
-  `mem0-client.ts` and passed as mem0's `customInstructions` (which lands as a
-  `## Custom Instructions` section appended to the prompt). It enforces the "restateable next
-  month in a different task?" test, the four categories, and hard-drops for assistant
-  advice/acknowledgments and task-episodic noise.
-- Honest limitation: this *biases* the high-recall base prompt toward dropping; it does not
-  fully replace it. True low-recall would require patching the dist (not done).
+这套设计的核心目的是避免双写竞争。
 
-### Assistant-attribution prune (deterministic)
-- mem0 sometimes stores the assistant's own statements with `attributedTo: "assistant"`.
-- `pruneAssistantAttributed()` does a direct Qdrant filtered-delete of those points
-  (`filter: attributedTo == "assistant"`), no LLM/embedding. Runs in the maintenance pass
-  (before each snapshot) so it doesn't slow `add`.
+### 触发条件
 
-### Audit snapshot (one-way)
-- `maybeSnapshot()` regenerates `notes/memory/SNAPSHOT.md` from `getAll()` on churn (every 5
-  adds) / interval (12h). The notes repo's daily sync commits it → grep / git log -p / diff
-  review. Snapshot is disposable; mem0/Qdrant is the store of record.
+当前会触发 memory write check 的时机只有三个：
 
-## Config / env (`.env`)
-- `GOOGLE_API_KEY` — required (embeddings + extraction).
-- `QDRANT_URL` (default `http://localhost:6333`), `MEM0_USER_ID` (`sum`).
-- Optional: `MEM0_LLM_MODEL` (set to `gemini-2.5-flash`), `MEM0_EMBED_MODEL`,
-  `MEM0_EMBED_DIMS`, `MEM0_COLLECTION`, `MEMORY_*_DEBOUNCE_MS`, `MEMORY_SNAPSHOT_*`,
-  `MEM0_TELEMETRY` (defaults off via `mem0-env.ts`).
+1. `session.idle`
+默认 debounce `60s`。
 
-## Files
-- **NEW:** `.opencode/plugin/mem0-client.ts` (configured `Memory` + gate loader),
-  `.opencode/plugin/mem0-memory.ts` (plugin: extract/search/prune/snapshot),
-  `.opencode/plugin/mem0-env.ts` (loads `.env` + disables telemetry before mem0 import),
-  `.opencode/memory/EXTRACTION_GATE.md` (low-recall gate).
-- **EDIT:** `.opencode/opencode.json` (plugin list + instructions), `docker-compose.yml`
-  (qdrant), `.env.example`, `.opencode/memory/PROTOCOL.md` (pull-based).
-  (`GOOGLE_API_KEY` now reaches the spawned server via the bridge's process env;
-  the old `scripts/start-opencode-serve.sh` forwarder was retired.)
-- **RETIRED (decommissioned, file kept):** `.opencode/plugin/memory.ts`; old
-  `notes/memory/*.md` + `MEMORY.md` remain inert (no longer in `instructions`).
+2. 用户消息包含 `记住 / remember`
+不是直接写一条 memory，而是把同一个 extractor 提前触发，默认 debounce `5s`，并把这批标成 `source:"explicit"`。
 
-## History / skipped
-- **Phase 5 backfill SKIPPED** — started the mem0 store clean rather than migrating the old 50
-  files (mostly the task-episodic junk this work set out to leave behind; durable facts already
-  in CLAUDE.md / notes/user.md / AGENTS.md / skills). `scripts/mem0-backfill.ts` was written
-  then removed (recoverable from git if a selective import is ever wanted).
-- **Backend was OpenAI in the original plan**, switched to Gemini (single key, fully on Google).
+3. `session.deleted`
+session 删除时立刻 flush 一次。
 
-## Verification (done)
-1. Gemini key valid, Qdrant healthy, models respond (200): `gemini-embedding-001`,
-   `gemini-2.5-flash`.
-2. Live add/search round-trip works; memories land in Qdrant with `source` + `sessionId`.
-3. Cross-session dedup: removing `runId` collapsed the "donut ×3" duplication into one pool.
-4. Gate: assistant-advice junk ("User was advised to…") and over-extraction eliminated; durable
-   facts retained.
-5. Race: single writer → no explicit/idle duplicate.
+### 重要限制
 
-## Open items: compaction (semantic-overlap consolidation) — DEFERRED, not implemented
+memory write check 是 **严格按 session** 做的：
 
-### The problem
-The active write path (mem0-ts OSS additive pipeline) is **ADD-only with exact-text hash
-dedup**. So memories that *mean* the same thing but are worded differently are **not merged** —
-they coexist and slowly accumulate. Observed example (both passed the gate, both kept):
-- "User prefers matcha over coffee"
-- "User cannot drink coffee because it causes their heart to race, but matcha is acceptable"
+- timer 按 `sessionID`
+- pending explicit 标记按 `sessionID`
+- watermark 也按 `sessionID`
 
-The extraction gate stops *junk*; it does **not** look across the store for *overlap*. Removing
-`runId` (so dedup sees the whole user pool) made the LLM skip obvious exact restatements, but
-differently-worded near-duplicates still slip in. Impact is low (search still returns relevant
-hits) but the store bloats over time.
+但最终 memory pool 不是按 session 隔离的，而是按 `user_id` 共享。`sessionId` 只作为 provenance 写进 metadata。
 
-### What mem0 does / doesn't provide (verified in source)
-- **No standalone batch "compaction"** anywhere in mem0 (Python or TS). Confirmed by grep —
-  there is no whole-store merge/reconcile feature.
-- mem0 **does** ship a write-time UPDATE/DELETE "smart memory manager" flow
-  (`DEFAULT_UPDATE_MEMORY_PROMPT` in Python; `getUpdateMemoryMessages` helper in TS). It's a
-  *different `add` pipeline* than the additive one — and in the installed TS version
-  `getUpdateMemoryMessages` does not exist in `mem0ai@3.0.8` dist at all (`add` runs
-  `ADDITIVE_EXTRACTION_PROMPT` only). The two pipelines are mutually exclusive.
-- Therefore switching to mem0's native consolidation would require a **fork/patch of mem0-ts**,
-  and would **replace the additive prompt** and change how our `EXTRACTION_GATE.md` gate is
-  injected. NOT worth it.
+### 关闭 TUI 的后果
 
-### Community context (GitHub findings, 2026-06)
-- **Issue #4896 closed "not planned"**: Official position — semantic conflict resolution will NOT
-  be added to the additive pipeline. The team's answer is memory linking + client-side retrieval
-  prioritization, not write-time merging.
-- **Issue #4573** ("97.8% junk" production audit, 10,134 entries, 32 days):
-  - The extraction prompt is the bottleneck, not the model. Upgrading from gemma2:2b to
-    Sonnet 4.6 made extraction *worse* — a better model follows the permissive default prompt
-    more faithfully, so it extracts more indiscriminately.
-  - Largest junk category (52.7%): **system prompt / boot file restating** — the agent's own
-    instructions get re-extracted every session.
-  - **Feedback loop amplification** is a confirmed production risk: memories recalled into
-    context are treated as new conversation content by the extraction LLM and re-extracted.
-    One hallucinated "User prefers Vim" became 808 copies over 32 days. Our EXTRACTION_GATE
-    should explicitly instruct the LLM to skip content that looks like a recalled memory.
-  - Their fix recommendation: negative few-shot examples in the extraction prompt (what NOT to
-    store), and a REJECT action in the update-decision prompt — both missing from the additive
-    pipeline.
-- **Issue #5352** (external workaround, open): Someone open-sourced a drop-in recipe:
-  timestamp + UUID prefixing on recall output, explicit `mem0_update(id)`/`mem0_delete(id)`
-  agent tools, and a weekly hygiene script (cosine ≥ 0.82 cluster → LLM merge → SDK
-  update/delete). Same pattern as our planned external compaction pass.
-- **PR #4302** (merged): `openclaw/` plugin in the mem0 repo added `filtering.ts`,
-  `isolation.ts`, and `DEFAULT_CUSTOM_INSTRUCTIONS`. These are in a **separate `openclaw`
-  package**, not in the `mem0ai` npm package — they are NOT in our `mem0ai@3.0.8` install.
-- **PR #5254** (open, unmerged as of 2026-06): Adds per-call `prompt` override to
-  `AddMemoryOptions` (TS parity with Python). Would let explicit "记住" triggers use a
-  stricter gate than idle session writes. Not yet usable.
+这套不是“每轮都强制检查”。
 
-### Implementation (as built, 2026-06)
+如果用户刚聊完就直接关掉 TUI / 干掉进程：
 
-Implemented in `mem0-memory.ts` as a maintenance pass orthogonal to `add`. Key design:
+- 还没等到 `session.idle`
+- 也没走到 `session.deleted`
 
-- **Trigger**: every 20 adds (`COMPACT_CHURN`) OR 24 hours (`COMPACT_INTERVAL_MS`), whichever
-  comes first. Guard: skips if store has fewer than 10 entries (`COMPACT_MIN_ENTRIES`).
-- **Pass**: `getAll({ user_id })` → integer-indexed listing (UUID anti-hallucination trick,
-  same as mem0's own extraction) → single Gemini call with `COMPACT_SYSTEM` prompt → parse
-  ops → apply via `mem.add` / `mem.delete` / `mem.update` → force snapshot.
-- **Ops**: `merge` (add merged entry, delete sources) / `delete` / `rewrite` (in-place update)
-  / `flag` (unresolvable contradictions written to `notes/memory/CONFLICTS.md`).
-- **Safety**: `COMPACT_MAX_CHARS = 80_000` hard limit — skips the LLM call if the serialized
-  store exceeds this. `SNAPSHOT.md` (git-committed by notes sync) is the revert safety net.
-- **Model**: `COMPACT_MODEL` env var (defaults to `MEM0_LLM_MODEL`, i.e. `gemini-2.5-flash`).
-  Direct Gemini REST call — no extra SDK dependency.
-- **Env vars**: `MEMORY_COMPACT_ENABLED` (default on), `MEMORY_COMPACT_CHURN`,
-  `MEMORY_COMPACT_MIN_ENTRIES`, `MEMORY_COMPACT_INTERVAL_MS`, `MEMORY_COMPACT_MODEL`.
+那这次 session 很可能根本不会触发 memory write check。
 
-**Requires opencode server to be running** — all state (`addsSinceCompact`, `lastCompactAt`)
-is in-process memory. Process restart resets counters. On VPS where opencode runs continuously
-this is fine; local instances shouldn't rely on compaction firing reliably.
+这是当前设计的真实限制，不是假设。
 
-### Known limitation: whole-store pass
+## 读取与召回
 
-Every compaction run feeds the **entire store** to the LLM in one call. Cost grows linearly
-with store size. Current mitigations:
-- `COMPACT_MAX_CHARS = 80_000` aborts the call if the store is too large (but then compaction
-  never runs, which is also bad).
-- `COMPACT_CHURN = 20` and `COMPACT_INTERVAL_MS = 24h` keep the cadence low.
+读取完全是 pull-based：
 
-**Not a problem now** (store is small), but will need a proper fix at scale. The right
-approach is semantic clustering: group memories by cosine similarity, compact only within
-each cluster. This avoids the whole-store pass entirely. Deferred until the store is large
-enough to warrant it.
+- 模型需要时自己调用 `search_memories`
+- 底层是 `mem.search(query, { user_id })`
+- 默认 top-k 5
+
+不会把整个 memory 库自动塞回每次对话。
+
+这点是当前方案明确优于老 `MEMORY.md` 常驻注入的地方。
+
+## 为什么不用 `runId`
+
+曾经踩过坑：把 session 级别的 id 当 `runId` 传给 mem0，会导致 dedup 只在单个 session 内生效。
+
+结果就是：
+
+- 同一个事实跨 session 看不到彼此
+- 相同意思的记忆会重复积累
+
+所以当前固定用：
+
+- `userId` 作为全局池的主 scope
+- `sessionId` 只写 metadata
+
+这是已验证过的决定，不要回退。
+
+## 质量控制：现在靠什么防脏写
+
+### 1. Extraction gate
+
+外部 gate 文件在 `.opencode/memory/EXTRACTION_GATE.md`。
+
+它做的事不是替换 mem0 的默认 prompt，而是追加 `customInstructions` 去强行压低 recall。
+
+当前 gate 的硬要求：
+
+1. 只允许四类：`user` / `feedback` / `project` / `reference`
+2. 一条 memory 只能表达一个事实
+3. 默认宁可不记，也不要多记
+4. 正常 coding / research / ops session，正确输出通常应该是空
+
+当前 gate 明确禁止：
+
+- assistant 的建议、计划、确认语
+- 当前任务过程
+- 一次性交付总结
+- 带日期的事件回顾
+- 系统/debug 状态
+- recalled memory 再次入库
+- 多句大总结
+
+### 2. Assistant-attribution prune
+
+mem0 会偶尔把助手自己的话写成 memory，并带 `attributedTo: "assistant"`。
+
+这类东西不值得让 LLM 再判断，直接 deterministic 删：
+
+- 走 Qdrant filtered delete
+- 在 snapshot 前清一次
+
+### 3. 写入后坏 memory 拦截
+
+这层是最近新加的，原因很简单：
+
+- 只靠 prompt 不够
+- 再轻量的 Gemini 也会一本正经地把过程材料写成“像事实的话”
+
+所以现在 `runExtraction()` 在 `mem.add()` 之后会检查返回结果；如果命中这些模式，就立刻删掉：
+
+- `User asked/instructed/requested/...`
+- `Assistant planned/checked/fixed/...`
+- `The deliverable/report/summary/task ... was ...`
+- 带 `2026-xx-xx` 这种日期化事件总结
+- `Qdrant / token / OAuth / snapshot / watermark / debounce` 这类系统状态
+- 过长或超过两句的 summary
+
+这层不是优雅设计，但很值钱，因为它是确定性止损。
+
+## 当前妥协
+
+### 妥协 1：仍然让 LLM 写最终 memory 文本
+
+这不是最稳的设计。
+
+更稳的是：
+
+- LLM 只做 worth-saving 判定
+- 或只指出 span
+- 最终存原文 / 文件事实
+
+但当前没走这条，是为了少动架构。
+
+代价就是：
+
+- 真相层仍然容易被 summary 漂移污染
+- 只能靠 gate + post-filter + compaction 去补救
+
+### 妥协 2：继续把 Qdrant 当主存储
+
+这也不是最稳的设计。
+
+我们已经明确知道，`Claude Code` / `OpenClaw native memory` 那种“文件 truth + 派生索引”更容易审计、更容易纠错。
+
+但当前没切过去，因为：
+
+- 自动 remember 这条链已经跑通
+- 先把写脏率降下来更现实
+- 大重构会把问题从“memory 质量”转移成“新架构实现”
+
+### 妥协 3：compaction 仍然用 LLM
+
+这层天生危险，因为 compaction 很容易从“去重”滑向“改写现实”。
+
+当前只能通过 prompt 明确压住：
+
+- 只允许 atomic fact 级别 rewrite / merge
+- 不允许揉成人物画像
+- 不允许写时间线
+- 不允许加解释、原因、背景
+
+也就是说：
+
+- 现在 compaction 只能做保守维护
+- 不能当知识整理器用
+
+## 为什么轻量 Gemini 还够用
+
+这里用 lite 模型的原则很明确：
+
+- 它适合当保守门卫
+- 不适合当自由写作者
+
+当前我们只让它做：
+
+- worth-saving 判断
+- 短 memory 改写
+- 保守 compaction
+
+不让它做：
+
+- 大段开放式总结
+- 多事实融合
+- 高自由度人格画像生成
+
+在这个约束下，`gemini-2.5-flash-lite` 基本够用。
+如果以后还继续写脏，先改规则，不要先怪模型档位。
+
+## compaction：当前实现和边界
+
+当前 compaction 不是 mem0 原生能力，而是外接 maintenance pass。
+
+### 触发
+
+- 每 `20` 次新增后
+- 或每 `24h`
+- store 少于 `10` 条就不跑
+
+### 做法
+
+1. `getAll({ user_id })`
+2. 把全库列成编号文本
+3. 单次 Gemini 调用拿回操作数组
+4. 应用 `merge / delete / rewrite / flag`
+5. 强制 snapshot
+
+### 硬边界
+
+1. 这是 whole-store pass，成本线性增长。
+2. 进程重启会丢计数器。
+3. 本地临时 TUI 不要指望 compaction 稳定触发。
+4. 它只能做“保守清理”，不能做“智能总结”。
+
+### 现阶段为什么不重做
+
+讨论过 semantic clustering 之类更正统的做法，但当前 store 规模还小，先不值得。
+
+## 为什么没走 OpenClaw / Claude 风格的方案
+
+不是因为那条路不好，恰恰相反，是因为那条路更稳。
+
+结论已经明确：
+
+- `Claude Code`：文件 truth layer，更容易人工维护
+- `OpenClaw native memory`：文件 / transcript 为源，再建 FTS + vector index
+- 这两种都比“LLM summary 直接进 vector store”更稳
+
+但当前不切，是因为现在优先级不是“设计最优 memory 系统”，而是“别让现有自动记忆继续写垃圾”。
+
+## 明确不要再争的几个点
+
+1. 不要再把 `runId` 带回来。
+2. 不要再把 recalled memory 重新喂回 extraction。
+3. 不要指望“更强的大模型”自动解决脏写，社区经验正相反。
+4. 不要把 compaction 当总结器用。
+5. 不要为了复用 OpenAI OAuth 去折腾主会话背景 prompt。
+
+## 后续如果继续迭代，优先级顺序
+
+1. 先观察新规则下是否还出现 `User instructed ...` / `The deliverable was ...` 这类垃圾。
+2. 如果还有，继续加 deterministic filter，不先换架构。
+3. 如果规则已经很重还不稳，再考虑改成：
+   - LLM 只做 worth-saving / span picking
+   - 最终存原文或文件事实
+4. 真要重构，再上 file-truth + vector-index。
+
+## 相关文件
+
+- `.opencode/plugin/mem0-memory.ts`
+  触发、抽取调度、snapshot、compaction、search tool。
+
+- `.opencode/lib/mem0-extract.ts`
+  session watermark、fresh message slicing、真正的 `mem.add()` 调用、写入后坏 memory 清理。
+
+- `.opencode/lib/mem0-client.ts`
+  mem0 实例初始化、Gemini 配置、gate 注入。
+
+- `.opencode/memory/EXTRACTION_GATE.md`
+  低召回 gate，当前最重要的规则文件。
+
+## 最后一句
+
+当前系统的本质没有变：它还是 `LLM-extracted memory`。现在做的一切，只是在把这套东西往“少写、短写、别自作聪明”上拧。只要还没换 truth layer，就别对它抱“绝对可信”的幻想。

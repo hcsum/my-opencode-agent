@@ -26,6 +26,22 @@ export const KEYWORD_RE =
   /(记住|记一下|记下|存一下|帮我记|remember (this|that)|save this|note this down|don'?t forget)/i;
 const CODE_BLOCK_RE = /```[\s\S]*?```/g;
 const INLINE_CODE_RE = /`[^`]+`/g;
+const BAD_MEMORY_PATTERNS: RegExp[] = [
+  /^(user|assistant)\s+(asked|instructed|requested|told|advised|recommended|planned|checked|created|fixed|debugged|researched|committed|pushed)\b/i,
+  /^(the\s+)?(deliverable|report|summary|artifact|research|task|runbook|cleanup|migration)\b.*\b(was|were|is|are)\b/i,
+  /\b(on|as of)\s+20\d{2}-\d{2}-\d{2}\b/i,
+  /\b(qdrant|collection|vector store|api|token|oauth|credential|invalid_grant|snapshot|watermark|debounce|session\.idle)\b/i,
+  /\bcontains?\s+\d+\s+(points|entries|memories|records)\b/i,
+];
+
+function shouldRejectStoredMemory(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return true;
+  if (normalized.length > 220) return true;
+  const sentences = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (sentences.length > 2) return true;
+  return BAD_MEMORY_PATTERNS.some((re) => re.test(normalized));
+}
 
 /** True if `text` carries an explicit "记住 / remember" instruction (code spans
  * stripped first so a keyword inside a fenced block doesn't trigger). */
@@ -119,7 +135,7 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
     : fresh.some((m) => m.role === "user" && detectKeyword(m.text));
   const source = explicit ? "explicit" : "auto-idle";
 
-  await mem.add(transcript, {
+  const addResult = await mem.add(transcript, {
     userId: USER_ID,
     // sessionId is provenance metadata, NOT runId — long-term user memory is one
     // pool keyed by user_id so facts dedup across sessions AND runtimes; a
@@ -127,6 +143,18 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
     metadata: { source, sessionId: sessionID, runtime },
     infer: true,
   });
+  const results = Array.isArray((addResult as { results?: unknown[] }).results)
+    ? ((addResult as { results: Array<{ id?: string; memory?: string; event?: string }> }).results)
+    : [];
+  for (const item of results) {
+    if (!item?.id || !item.memory) continue;
+    if (!shouldRejectStoredMemory(item.memory)) continue;
+    try {
+      await mem.delete(item.id);
+    } catch {
+      // Best-effort cleanup; a failed delete should not block the session watermark.
+    }
+  }
   writeWatermark(root, sessionID, latestID);
   return { status: "added", latestID };
 }
