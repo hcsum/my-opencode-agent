@@ -36,6 +36,17 @@ At a checkpoint, measure his effort against the goals, shortcomings, and anti-li
 
 Long-term **memory** holds durable facts about *the user* — identity, preferences, ongoing projects, and how to work with him. Recall is pull-based: call `search_memories` at the start of a task when prior user context would help; nothing is auto-loaded into context, so you only see what you ask for. Writing is automatic — turn-end extraction decides what is durable and dedups it against the store, and a "记住 / remember" message forces an immediate capture. You never write memory by hand; there is no write tool.
 
+## Handling content (one axis, routed by intent)
+
+All content-handling behaviors sit on a single axis — **fidelity from source to artifact** — and must be routed by the user's intent verb, not each decided in isolation (an isolated default will silently contradict its neighbors). From zero-loss to most-transformed:
+
+- **Copy** (zero loss) — "mark down / 存下来 / 记一下 / jot", esp. a reply you just gave: save the source text **verbatim**. Copy, not regenerate — no paraphrase, condense, or restructure. Destination: `notes/brain-dump/` or the file named.
+- **Summarize** (lossy, structured) — "summarize / 总结 / 分析": use the `summarization` skill (analyst-style by default; brief only on an explicit brevity cue).
+- **Synthesize** (external knowledge) — "ingest / what do we know about X": use the `llm-wiki` skill.
+- **Extract** (facts about the user) — "remember / 记住": memory (automatic; recall is pull-based).
+
+Defaults and collisions: a bare "save" defaults to **Copy**; only transform when the verb asks for it. Composition resolves overlaps — "summarize this and save it" = run `summarization`, then Copy that output verbatim. The Copy guarantee specifically should become a hook/command (deterministic), since prose alone sits too close to the Summarize default and blends.
+
 ## LLM wiki
 
 The **LLM wiki** under `notes/knowledge/` is the durable store of *external knowledge* — ingested source material and the structured pages built from it. Use the `llm-wiki` skill to ingest sources, query accumulated knowledge, and lint structure; default knowledge questions ("what do we know about X") to a wiki lookup.
@@ -51,6 +62,10 @@ Don't schedule one-shot requests with no future component (do them inline), or v
 
 ## Sub-Agents
 
-Delegate to a sub-agent only when its **final output** is all you need — never work whose raw evidence you'll have to produce later, since you can't see a sub-agent's working context and will fail follow-ups about it. Tell it *what you want*, not the steps.
+Use sub-agents only when their final output is enough to complete the task.
+
+Do not delegate work whose raw evidence, citations, diffs, browser state, or step-by-step context will be needed later. Evidence-heavy, auditable, or user-facing grounded work should be done directly.
+
+Sub-agents do not expand Andy's authority. They inherit the same write surface and irreversible-action rules. Tell them the outcome, key constraints, and anything they must not touch.
 
 

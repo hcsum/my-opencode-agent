@@ -101,7 +101,10 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
   const root = ctx.directory;
   const snapshotPath = path.join(root, SNAPSHOT_REL);
 
-  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const timers = new Map<
+    string,
+    { handle: ReturnType<typeof setTimeout>; dueAt: number; reason: "idle" | "explicit" }
+  >();
   const running = new Set<string>();
   // Sessions whose next extraction was triggered by an explicit "记住/remember"
   // keyword — so that batch is tagged source:"explicit" rather than "auto-idle".
@@ -141,6 +144,12 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
       .map((p) => p.text!.trim())
       .filter(Boolean)
       .join("\n");
+  }
+
+  function readHookText(value: unknown): string {
+    if (!value || typeof value !== "object") return "";
+    const maybeParts = (value as { parts?: unknown }).parts;
+    return Array.isArray(maybeParts) ? messageText(maybeParts as any[]) : "";
   }
 
   // ---- maintenance: drop assistant-attributed memories ------------------
@@ -346,6 +355,12 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
         consumeExplicit: () => pendingExplicit.delete(sessionID),
       });
 
+      await log("debug", "extract finished", {
+        sessionID,
+        status: result.status,
+        ...(result.status === "added" ? { latestID: result.latestID } : { reason: result.reason }),
+      });
+
       if (result.status === "added") {
         addsSinceSnapshot++;
         addsSinceCompact++;
@@ -359,16 +374,38 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
     }
   }
 
-  function scheduleExtract(sessionID: string, delayMs: number = DEBOUNCE_MS) {
+  function scheduleExtract(
+    sessionID: string,
+    delayMs: number = DEBOUNCE_MS,
+    reason: "idle" | "explicit" = "idle",
+  ) {
     if (!EXTRACT_ENABLED) return;
+    const now = Date.now();
+    const dueAt = now + delayMs;
     const existing = timers.get(sessionID);
-    if (existing) clearTimeout(existing); // coalesce — only one pending run per session
+    // Never let a later idle debounce push an earlier explicit run farther out.
+    if (existing && existing.dueAt <= dueAt) {
+      void log("debug", "extract timer kept", {
+        sessionID,
+        existingReason: existing.reason,
+        existingDueInMs: Math.max(0, existing.dueAt - now),
+        skippedReason: reason,
+        skippedDelayMs: delayMs,
+      });
+      return;
+    }
+    if (existing) clearTimeout(existing.handle);
+    void log("debug", "extract timer scheduled", { sessionID, reason, delayMs });
     timers.set(
       sessionID,
-      setTimeout(() => {
-        timers.delete(sessionID);
-        void extract(sessionID);
-      }, delayMs),
+      {
+        reason,
+        dueAt,
+        handle: setTimeout(() => {
+          timers.delete(sessionID);
+          void extract(sessionID);
+        }, delayMs),
+      },
     );
   }
 
@@ -404,14 +441,26 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
 
     "chat.message": async (input, output) => {
       try {
-        const text = messageText(output.parts as any[]);
+        const inputText = readHookText(input);
+        const outputText = readHookText(output);
+        const text = inputText || outputText;
+        await log("debug", "chat.message received", {
+          sessionID: (input as { sessionID?: string }).sessionID,
+          inputText,
+          outputText,
+          chosenSource: inputText ? "input" : outputText ? "output" : "none",
+        });
         if (text && detectKeyword(text)) {
           // Explicit "记住/remember" does NOT do its own add — that's what caused
           // the explicit/idle double-write race. Instead it fires the SAME single
           // extractor early (short debounce) and tags the batch source:"explicit".
           // One writer, one watermark → a message is processed exactly once.
           pendingExplicit.add(input.sessionID);
-          scheduleExtract(input.sessionID, KEYWORD_DEBOUNCE_MS);
+          await log("info", "explicit memory trigger detected", {
+            sessionID: input.sessionID,
+            text,
+          });
+          scheduleExtract(input.sessionID, KEYWORD_DEBOUNCE_MS, "explicit");
         }
       } catch (err) {
         await logError("chat.message error", { err: String(err) });
@@ -420,12 +469,12 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
 
     event: async ({ event }) => {
       if (event.type === "session.idle") {
-        scheduleExtract(event.properties.sessionID);
+        scheduleExtract(event.properties.sessionID, DEBOUNCE_MS, "idle");
       } else if (event.type === "session.deleted") {
         const id = (event as any).properties?.info?.id ?? (event as any).properties?.sessionID;
         if (id) {
           const t = timers.get(id);
-          if (t) clearTimeout(t);
+          if (t) clearTimeout(t.handle);
           timers.delete(id);
           void extract(id);
         }
