@@ -1,7 +1,4 @@
 import "./mem0-env"; // MUST be first — sets MEM0_TELEMETRY before mem0 loads
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { Memory } from "mem0ai/oss";
 
 // mem0ai writes operational chatter straight to the global `console`
@@ -44,8 +41,9 @@ export const USER_ID = process.env.MEM0_USER_ID ?? "sum";
 // mem0-env.ts has already loaded `.env` into process.env by the time this runs.
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY ?? "";
 export const QDRANT_URL = process.env.QDRANT_URL ?? "http://localhost:6333";
-// Cheap extractor LLM — mem0 runs it on every add; NEVER the expensive session
-// model (openai/gpt-5.4). Default to the cheapest current Gemini flash.
+// mem0's Memory constructor requires an llm config even though Plan A never
+// invokes mem0's own extractor (we own extraction in mem0-judge.ts). The judge
+// reads the same MEM0_LLM_MODEL for its own Gemini call.
 const LLM_MODEL = process.env.MEM0_LLM_MODEL ?? "gemini-2.5-flash-lite";
 // Embeddings run on Gemini (gemini-embedding-001). Its output dim is
 // configurable (768 / 1536 / 3072); we pin it via embeddingDims below.
@@ -55,20 +53,9 @@ const EMBED_MODEL = process.env.MEM0_EMBED_MODEL ?? "gemini-embedding-001";
 // dimension unchanged from the original OpenAI setup; Gemini supports it.
 const EMBED_DIMS = Number(process.env.MEM0_EMBED_DIMS) || 1536;
 
-// Our low-recall extraction gate, injected as mem0's `customInstructions` (which
-// lands as a "## Custom Instructions" section in the extraction prompt). mem0's
-// base prompt is high-recall by design; this biases it hard toward dropping
-// task-episodic noise and the assistant's own advice. Kept in an external file
-// so it's reviewable/editable without touching code.
-function loadExtractionGate(): string | undefined {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url)); // .opencode/plugin
-    return readFileSync(join(here, "..", "memory", "EXTRACTION_GATE.md"), "utf8").trim() || undefined;
-  } catch {
-    return undefined; // no gate file → fall back to mem0's default behavior
-  }
-}
-const CUSTOM_INSTRUCTIONS = loadExtractionGate();
+// Plan A owns extraction (see mem0-judge.ts): mem0's own extractor (infer:true)
+// is never invoked, so no `customInstructions` are wired here. The low-recall
+// gate in ../memory/EXTRACTION_GATE.md is consumed by the judge, not by mem0.
 
 let cached: Memory | null = null;
 let initFailed = false;
@@ -95,9 +82,6 @@ export function getMemory(): Memory | null {
       },
       embedder: { provider: "gemini", config: { apiKey: GOOGLE_API_KEY, model: EMBED_MODEL, embeddingDims: EMBED_DIMS } },
       llm: { provider: "gemini", config: { apiKey: GOOGLE_API_KEY, model: LLM_MODEL } },
-      // Low-recall gate (../memory/EXTRACTION_GATE.md) layered onto mem0's
-      // high-recall base extraction prompt.
-      ...(CUSTOM_INSTRUCTIONS ? { customInstructions: CUSTOM_INSTRUCTIONS } : {}),
       // We don't use mem0's local SQLite op-history (Qdrant + SNAPSHOT.md are
       // our audit trail); disabling it avoids a stray memory.db in the repo.
       disableHistory: true,
