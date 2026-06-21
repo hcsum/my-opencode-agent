@@ -44,6 +44,24 @@ Build real backlink placements from an existing target list. This skill owns exe
 - Prefer `parked` when the target might still work later but is currently blocked on a temporary or manual-only step.
 - Always record the reason in `note` so the next run does not rediscover the same blocker from scratch.
 
+## Known Platform Families
+
+Before attempting a site, check if it belongs to a known family — saves the entire "how do links come out of this site?" preflight.
+
+**Web2.0 free blog family** (blogrelation, madmouseblog, luwebs, iyublog, thezenweb, blogsmine, activoblog, bloggadores, azzablog, aboutyoublog):
+- Registration: Blog Name + Email + Password + SecureImg reCAPTCHA (hand CAPTCHA to user)
+- Auto-login after signup, no email confirmation needed
+- New post at `https://<platform>.com/new-post`; TinyMCE injection via `tinymce.get("content").setContent(html)`; publish via `#publish` click
+- All article-body links are dofollow (verified)
+- One shared account hosts all projects on the platform (2 posts per platform)
+- thezenweb differs: CKEditor, `/new` route, KeyCAPTCHA drag-puzzle
+- Full CDP automation pattern: `web-access` site-patterns → `web2-blog-family.md`
+
+**AI tool directories** (topai.tools, saashub.com, aidirectori.es, aitoolhunt.com):
+- Most charge $47–$229 for listing; mark `no` immediately on payment wall
+- Auto-generated profile pages are not real placements — skip
+- substack.com is the notable exception: free, dofollow, AS=86 (medium effort — needs email verify + newsletter setup)
+
 ## CSV Discipline
 
 - Update the tracking CSV after each target attempt.
