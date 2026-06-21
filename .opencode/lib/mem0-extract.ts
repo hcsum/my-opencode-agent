@@ -30,8 +30,8 @@ export const MIN_TRANSCRIPT_CHARS = 40;
 // How many existing memories to pull as dedup/UPDATE context for the judge.
 export const DEDUP_SEARCH_LIMIT = 12;
 
-export const KEYWORD_RE =
-  /(记住|记一下|记下|存一下|帮我记|remember (this|that)|save this|note this down|don'?t forget)/i;
+const CN_KEYWORD_RE = /(记住|记一下|记下|存一下|帮我记)/i;
+const EN_KEYWORD_RE = /(^|[\n.!?]\s*)(please\s+)?(remember\b|save this\b|note this down\b|don'?t forget\b)/i;
 const CODE_BLOCK_RE = /```[\s\S]*?```/g;
 const INLINE_CODE_RE = /`[^`]+`/g;
 const BAD_MEMORY_PATTERNS: RegExp[] = [
@@ -55,7 +55,7 @@ function shouldRejectStoredMemory(text: string): boolean {
  * stripped first so a keyword inside a fenced block doesn't trigger). */
 export function detectKeyword(text: string): boolean {
   const stripped = text.replace(CODE_BLOCK_RE, "").replace(INLINE_CODE_RE, "");
-  return KEYWORD_RE.test(stripped);
+  return CN_KEYWORD_RE.test(stripped) || EN_KEYWORD_RE.test(stripped);
 }
 
 /** A conversation turn normalized across runtimes. `id` is the runtime's stable

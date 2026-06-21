@@ -109,7 +109,7 @@ notes/memory/
 | 1 显式 remember | 用户说「记住」，模型落盘 | 否（手动） | 0 | —（被 4 取代） |
 | 2 模型对话内 checklist | PROTOCOL 锚定 checklist，模型自觉写 | 半（靠模型自觉，不稳） | 0 | ❌ 砍掉（有 3 后冗余） |
 | 3 后台抽取 | `session.idle` 防抖后抽取新消息 | **是** | 每轮对话约一次便宜 LLM 调用 | ✅ 主力 |
-| 4 关键词强制存 | `chat.message` 正则拦截 → 强制即时存 | 即时补充 | 0 | ✅ 即时补充 |
+| 4 关键词提前触发 | `chat.message` 正则拦截 → 提前触发同一 extractor | 即时补充 | 0 | ✅ 即时补充 |
 
 **采用方案 = 3（主力）+ 4（即时补充）：**
 
@@ -138,20 +138,20 @@ session.idle 触发
 - **调用便宜模型的方式**：plugin 持有 `ctx.client`（OpencodeClient）→ `client.session.create()` 开临时 headless session、用小模型 `prompt()` 跑抽取、读结果、删除 session。**复用 OpenCode 已配置的 provider，无需额外 API key。**
 - **噪音控制**：抽取质量取决于 PROTOCOL 里「什么值得记」的标准写得够严，否则会记噪音——靠 prompt 调严。
 
-#### 即时补充：关键词强制存
+#### 即时补充：关键词提前触发
 
 后台抽取有 ~1 分钟延迟。对「我现在就要记住这个」的场景，同一 plugin 挂 `chat.message` hook：
 - 正则匹配 `记住 / 记一下 / remember / save this / don't forget`（可配置，先剥代码块再匹配，借鉴 supermemory）。
-- 命中 → 往用户消息注入一段 synthetic 强制指令（"You MUST save this now via write…"），让模型当场落盘。
+- 命中 → 不单独写库；而是把同一个 extractor 提前触发，默认 short debounce `~5s`，并把该批次标成 `source:"explicit"`。
 
 | 场景 | 机制 | 延迟 |
 |---|---|---|
-| 你明确要记某事 | 4 关键词强制 | 即时 |
+| 你明确要记某事 | 4 关键词提前触发 | 短延迟（默认 ~5s） |
 | 你没说，但聊出了值得记的偏好/事实 | 3 后台抽取 | ~1 分钟（对话停下后） |
 
 #### PROTOCOL.md 的角色
 
-`.opencode/memory/PROTOCOL.md`（main repo，由 `instructions` 加载，常驻 context）描述：四种 type、frontmatter 格式、查重更新而非新建、写完更新 `MEMORY.md` 索引、`[[name]]` 互链、不碰 `notes/user.md`、以及「什么值得记 / 什么是噪音」的判定标准。**后台抽取器和即时强制存共用这同一套标准**（抽取器把 PROTOCOL 喂给便宜模型，强制存让主模型读 context 里的 PROTOCOL）。
+`.opencode/memory/PROTOCOL.md`（main repo，由 `instructions` 加载，常驻 context）描述：四种 type、frontmatter 格式、查重更新而非新建、写完更新 `MEMORY.md` 索引、`[[name]]` 互链、不碰 `notes/user.md`、以及「什么值得记 / 什么是噪音」的判定标准。**后台抽取器和关键词提前触发共用这同一套标准**。
 
 ### 3.5 与 llm-wiki / AGENTS.md 的边界（重要）
 
@@ -235,7 +235,7 @@ Phase-2（不在 MVP，验证后再评估）：
 1. **召回**：OpenCode 原生 `config.instructions` 注入 `MEMORY.md` 索引 + `PROTOCOL.md`（省 token），记忆正文按需 read 展开——不一次性塞全部正文。零代码、不依赖 experimental hook。
 2. **协议位置**：单独成文 `.opencode/memory/PROTOCOL.md`（main repo——协议是 feature spec，归 main；见 §10.1），由 `instructions` 一并加载，AGENTS.md 只留短指针。
 3. **种子记忆**：MVP **预置几条**已知事实，即时验证注入 + 召回链路。
-4. **捕获触发（修订）**：目标是**真 auto write**。采用 **机制 3（debounced `session.idle` 后台抽取）为主力 + 机制 4（关键词强制存）为即时补充**，砍掉机制 2（模型对话内自觉，不可靠且被 3 取代）。后台抽取从原 phase-2 提到 MVP。实现细节见 §3.4。
+4. **捕获触发（修订）**：目标是**真 auto write**。采用 **机制 3（debounced `session.idle` 后台抽取）为主力 + 机制 4（关键词提前触发同一 extractor）为即时补充**，砍掉机制 2（模型对话内自觉，不可靠且被 3 取代）。后台抽取从原 phase-2 提到 MVP。实现细节见 §3.4。
 5. **后台抽取调模型**：复用 OpenCode 已配置 provider，经 `ctx.client` 开 headless 临时 session 跑便宜模型，不引入额外 API key；增量水位线控成本，喂索引做去重。
 
 ---

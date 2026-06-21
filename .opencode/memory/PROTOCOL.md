@@ -20,8 +20,10 @@ You normally do **not** need to write memories by hand:
 
 - After a conversation goes idle, a background extractor mines the new messages and stores any durable
   fact about the user automatically (deduping/updating against what's already there).
-- When the user explicitly says **"记住 / remember / save this"**, that message is captured
-  immediately. You don't need to do anything, but you may briefly confirm what was noted.
+- When the user explicitly says **"记住 / remember / save this"**, that message is
+  fast-tracked into the same extraction pipeline with a short debounce (about 5s),
+  then stored if the judge accepts it. You don't need to do anything, but you may
+  briefly confirm what was noted.
 
 So your job is mainly **recall** (call `search_memories`), not bookkeeping.
 
