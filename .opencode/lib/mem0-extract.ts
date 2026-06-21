@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { getMemory, USER_ID } from "./mem0-client";
+import { COLLECTION, getMemory, QDRANT_URL, USER_ID } from "./mem0-client";
 import { judge, type ExistingMemory } from "./mem0-judge";
 
 /**
@@ -29,6 +30,8 @@ export const MAX_TRANSCRIPT_CHARS = 24_000;
 export const MIN_TRANSCRIPT_CHARS = 40;
 // How many existing memories to pull as dedup/UPDATE context for the judge.
 export const DEDUP_SEARCH_LIMIT = 12;
+export const EXACT_DEDUP_PAGE_SIZE = 256;
+export const EXACT_DEDUP_SCAN_MAX = 2_000;
 
 const CN_KEYWORD_RE = /(记住|记一下|记下|存一下|帮我记)/i;
 const EN_KEYWORD_RE = /(^|[\n.!?]\s*)(please\s+)?(remember\b|save this\b|note this down\b|don'?t forget\b)/i;
@@ -49,6 +52,96 @@ function shouldRejectStoredMemory(text: string): boolean {
   const sentences = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
   if (sentences.length > 2) return true;
   return BAD_MEMORY_PATTERNS.some((re) => re.test(normalized));
+}
+
+export function normalizeFactText(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[。！？.!?]+$/gu, "")
+    .toLowerCase();
+}
+
+export function factKeyForText(text: string): string {
+  return createHash("sha256").update(normalizeFactText(text)).digest("hex");
+}
+
+interface ExactMemoryMatch {
+  id: string;
+  memory: string;
+}
+
+function payloadText(payload: Record<string, unknown> | null | undefined): string {
+  if (!payload) return "";
+  if (typeof payload.data === "string") return payload.data;
+  if (typeof payload.memory === "string") return payload.memory;
+  return "";
+}
+
+async function qdrantScroll(body: Record<string, unknown>) {
+  const res = await fetch(`${QDRANT_URL}/collections/${COLLECTION}/points/scroll`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`qdrant ${res.status}`);
+  return (await res.json()) as {
+    result?: {
+      points?: Array<{ id?: string | number; payload?: Record<string, unknown> | null }>;
+      next_page_offset?: unknown;
+    };
+  };
+}
+
+async function findExactMemoryMatch(text: string): Promise<ExactMemoryMatch | null> {
+  const normalized = normalizeFactText(text);
+  if (!normalized) return null;
+
+  const factKey = factKeyForText(text);
+  try {
+    const exact = await qdrantScroll({
+      limit: 1,
+      with_payload: true,
+      with_vector: false,
+      filter: {
+        must: [
+          { key: "user_id", match: { value: USER_ID } },
+          { key: "factKey", match: { value: factKey } },
+        ],
+      },
+    });
+    const hit = exact.result?.points?.[0];
+    const memory = payloadText(hit?.payload);
+    if (hit?.id && memory) return { id: String(hit.id), memory };
+  } catch {
+    // Fall through to the normalized-text scan below.
+  }
+
+  let offset: unknown = undefined;
+  let scanned = 0;
+  while (scanned < EXACT_DEDUP_SCAN_MAX) {
+    const page = await qdrantScroll({
+      limit: EXACT_DEDUP_PAGE_SIZE,
+      with_payload: true,
+      with_vector: false,
+      ...(offset !== undefined ? { offset } : {}),
+      filter: { must: [{ key: "user_id", match: { value: USER_ID } }] },
+    });
+    const points = page.result?.points ?? [];
+    for (const point of points) {
+      const memory = payloadText(point.payload);
+      if (!memory) continue;
+      if (normalizeFactText(memory) === normalized && point.id) {
+        return { id: String(point.id), memory };
+      }
+    }
+    scanned += points.length;
+    offset = page.result?.next_page_offset;
+    if (!offset || points.length === 0) break;
+  }
+
+  return null;
 }
 
 /** True if `text` carries an explicit "记住 / remember" instruction (code spans
@@ -124,13 +217,18 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
     return { status: "skipped", reason: "no-fresh" };
   }
 
+  const explicit = opts.consumeExplicit
+    ? opts.consumeExplicit()
+    : fresh.some((m) => m.role === "user" && detectKeyword(m.text));
   const transcript = fresh
     .filter((m) => m.text.trim())
     .map((m) => `### ${m.role}\n${m.text}`)
     .join("\n\n")
     .slice(-MAX_TRANSCRIPT_CHARS);
 
-  if (transcript.trim().length < MIN_TRANSCRIPT_CHARS) {
+  // Explicit remember/记住 should still be judged even when the excerpt is very
+  // short; the user already singled this fact out for memory.
+  if (!explicit && transcript.trim().length < MIN_TRANSCRIPT_CHARS) {
     writeWatermark(root, sessionID, latestID);
     return { status: "skipped", reason: "too-short" };
   }
@@ -139,14 +237,10 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
   // Disabled (no key / down): leave watermark unmoved so we retry next turn.
   if (!mem) return { status: "skipped", reason: "no-memory" };
 
-  const explicit = opts.consumeExplicit
-    ? opts.consumeExplicit()
-    : fresh.some((m) => m.role === "user" && detectKeyword(m.text));
   const source = explicit ? "explicit" : "auto-idle";
 
-  // Pull existing memories semantically near this excerpt, so the judge can
-  // dedup and target UPDATEs instead of re-adding. Search failure (e.g. empty
-  // collection on first run) is non-fatal — the judge can still ADD.
+  // Pull existing memories semantically near this excerpt as advisory context for
+  // the judge. Final dedup is fact-level and deterministic at write time.
   let existing: ExistingMemory[] = [];
   try {
     const sr = await mem.search(transcript.slice(-2000), {
@@ -165,22 +259,36 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
   // sessionId is provenance metadata, NOT runId — long-term user memory is one
   // pool keyed by user_id so facts dedup across sessions AND runtimes; a
   // per-session runId would silo dedup and let the same fact re-accumulate.
-  const metadata = { source, sessionId: sessionID, runtime };
+  const batchFactKeys = new Set<string>();
   let wrote = 0;
   for (const d of decisions) {
     // Deterministic backstop: even a gated judge can slip; drop obvious junk.
     if (shouldRejectStoredMemory(d.text)) continue;
+    const normalizedText = normalizeFactText(d.text);
+    if (!normalizedText) continue;
+    const factKey = factKeyForText(d.text);
+    if (batchFactKeys.has(factKey)) continue;
     try {
       if (d.action === "ADD") {
+        const exact = await findExactMemoryMatch(d.text);
+        if (exact) {
+          if (exact.memory !== d.text) {
+            await mem.update(exact.id, { text: d.text });
+            wrote++;
+          }
+          batchFactKeys.add(factKey);
+          continue;
+        }
         // infer:false → store the fact verbatim; we already did the extraction.
         await mem.add([{ role: "user", content: d.text }], {
           userId: USER_ID,
-          metadata,
+          metadata: { source, sessionId: sessionID, runtime, factKey },
           infer: false,
         });
       } else {
         await mem.update(d.id, { text: d.text });
       }
+      batchFactKeys.add(factKey);
       wrote++;
     } catch {
       // Best-effort; one failed write should not block the session watermark.

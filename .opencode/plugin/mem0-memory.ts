@@ -369,6 +369,36 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
     }
   }
 
+  let shutdownFlush: Promise<void> | null = null;
+  async function flushPendingSessions(trigger: "dispose" | "beforeExit") {
+    if (shutdownFlush) return shutdownFlush;
+    const sessionIDs = [...new Set([...timers.keys(), ...pendingExplicit])];
+    if (sessionIDs.length === 0) return;
+
+    shutdownFlush = (async () => {
+      for (const sessionID of sessionIDs) {
+        const timer = timers.get(sessionID);
+        if (timer) clearTimeout(timer.handle);
+        timers.delete(sessionID);
+      }
+
+      await log("info", "shutdown flush starting", { trigger, sessionIDs });
+      for (const sessionID of sessionIDs) {
+        await extract(sessionID);
+      }
+      await log("info", "shutdown flush finished", { trigger, sessionIDs });
+    })().finally(() => {
+      shutdownFlush = null;
+    });
+
+    return shutdownFlush;
+  }
+
+  const onBeforeExit = () => {
+    void flushPendingSessions("beforeExit");
+  };
+  process.on("beforeExit", onBeforeExit);
+
   function scheduleExtract(
     sessionID: string,
     delayMs: number = DEBOUNCE_MS,
@@ -436,14 +466,10 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
 
     "chat.message": async (input, output) => {
       try {
-        const inputText = readHookText(input);
-        const outputText = readHookText(output);
-        const text = inputText || outputText;
+        const text = readHookText(output);
         await log("debug", "chat.message received", {
           sessionID: (input as { sessionID?: string }).sessionID,
-          inputText,
-          outputText,
-          chosenSource: inputText ? "input" : outputText ? "output" : "none",
+          text,
         });
         if (text && detectKeyword(text)) {
           // Explicit "记住/remember" does NOT do its own add — that's what caused
