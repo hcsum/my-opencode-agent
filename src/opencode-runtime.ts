@@ -1380,18 +1380,29 @@ function isTerminalAssistantMessage(info: AssistantMessage): boolean {
 }
 
 // Build the text dispatched to the model from an inbound request. Email subject
-// lines frequently hold the real task, so prepend the subject to the body.
+// lines frequently hold the real task, so the subject is kept as content — but as
+// a plain leading line, NOT a `Subject:` envelope label. The label made the
+// memory extractor read durable user facts as email/task artifacts and silently
+// drop them (the agent only ever talks over Gmail, so every turn carried it);
+// stripping it here keeps the envelope out of the session entirely, for both the
+// answering model and extraction. Quoted replies are already removed upstream by
+// stripQuotedReply (gmail.ts), so the subject is the last remaining envelope.
 // Scheduled tasks already carry a fully self-contained prompt in textBody and a
 // short label as their subject, so they are passed through untouched.
 function composeRunPrompt(request: GmailRunRequest): string {
   if (request.threadId.startsWith("scheduled-task:")) {
     return request.textBody;
   }
-  const subject = request.subject?.trim() ?? "";
   const body = request.textBody?.trim() ?? "";
-  if (!subject) return request.textBody;
-  if (!body) return `Subject: ${subject}`;
-  return `Subject: ${subject}\n\n${body}`;
+  // Drop reply/forward prefixes and the placeholder used for missing subjects so
+  // they don't become noise at the top of the prompt.
+  let subject = (request.subject?.trim() ?? "").replace(/^(re|fwd|fw)\s*:\s*/i, "").trim();
+  if (subject.toLowerCase() === "(no subject)") subject = "";
+  if (!subject) return body;
+  if (!body) return subject;
+  // Avoid repeating the subject when the body already leads with it.
+  if (body.toLowerCase().startsWith(subject.toLowerCase())) return body;
+  return `${subject}\n\n${body}`;
 }
 
 function buildPublicTaskFromMeta(meta: ThreadRunRecord): PublicTaskContext {
