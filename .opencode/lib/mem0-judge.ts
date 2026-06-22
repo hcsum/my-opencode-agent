@@ -54,12 +54,15 @@ Rules:
 - Never ADD something that is a near-duplicate of an existing memory or that the existing memories already cover.
 - Only use an "id" that appears in the existing-memories list; never invent one.`;
 
-function buildUserMessage(transcript: string, existing: ExistingMemory[], explicit: boolean): string {
+// `keywordHint` is true when a loose "记住 / remember"-type keyword was detected
+// in the excerpt. It is ONLY a hint — the gate tells the model to decide for
+// itself whether this is a genuine save request (and to ignore incidental uses).
+function buildUserMessage(transcript: string, existing: ExistingMemory[], keywordHint: boolean): string {
   const existingBlock = existing.length
     ? existing.map((m) => `- (id: ${m.id}) ${m.memory}`).join("\n")
     : "(none)";
-  const explicitNote = explicit
-    ? "\nNOTE: the user issued an EXPLICIT “记住 / remember” request in this excerpt — capture the durable fact they pointed at (still drop pure task-episodic noise).\n"
+  const explicitNote = keywordHint
+    ? "\nHINT: a “记住 / remember”-type keyword appeared in this excerpt. Decide per the gate whether the user is genuinely asking you to remember a durable fact; if so capture it (even if short), otherwise treat the excerpt normally.\n"
     : "";
   return [
     "EXISTING MEMORIES (for dedup / UPDATE targeting — do NOT re-extract these; they are already stored):",
@@ -99,11 +102,11 @@ async function geminiJSON(system: string, user: string): Promise<string> {
 export async function judge(
   transcript: string,
   existing: ExistingMemory[],
-  explicit: boolean,
+  keywordHint: boolean,
 ): Promise<Decision[]> {
   if (!GOOGLE_API_KEY) return [];
   const system = `${GATE}\n${OUTPUT_CONTRACT}`;
-  const user = buildUserMessage(transcript, existing, explicit);
+  const user = buildUserMessage(transcript, existing, keywordHint);
 
   let raw: string;
   try {

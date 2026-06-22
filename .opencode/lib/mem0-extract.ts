@@ -33,25 +33,29 @@ export const DEDUP_SEARCH_LIMIT = 12;
 export const EXACT_DEDUP_PAGE_SIZE = 256;
 export const EXACT_DEDUP_SCAN_MAX = 2_000;
 
-const CN_KEYWORD_RE = /(记住|记一下|记下|存一下|帮我记)/i;
-const EN_KEYWORD_RE = /(^|[\n.!?]\s*)(please\s+)?(remember\b|save this\b|note this down\b|don'?t forget\b)/i;
+// Loose: ANY mention of a remember-type word anywhere in the message. This is
+// deliberately broad because it only TRIGGERS an early extraction run and hints
+// the judge — it does NOT decide explicitness. The LLM gate makes the real call
+// (genuine save request vs. incidental "I can't remember"), so false positives
+// here are cheap (an extra run the judge filters) and missed phrasings are still
+// caught at idle.
+const CN_KEYWORD_RE = /(记住|记一下|记下|存一下|帮我记|记录)/i;
+const EN_KEYWORD_RE = /(remember|save this|note (this|that)|don'?t forget|keep in mind)/i;
 const CODE_BLOCK_RE = /```[\s\S]*?```/g;
 const INLINE_CODE_RE = /`[^`]+`/g;
-const BAD_MEMORY_PATTERNS: RegExp[] = [
-  /^(user|assistant)\s+(asked|instructed|requested|told|advised|recommended|planned|checked|created|fixed|debugged|researched|committed|pushed)\b/i,
-  /^(the\s+)?(deliverable|report|summary|artifact|research|task|runbook|cleanup|migration)\b.*\b(was|were|is|are)\b/i,
-  /\b(on|as of)\s+20\d{2}-\d{2}-\d{2}\b/i,
-  /\b(qdrant|collection|vector store|api|token|oauth|credential|invalid_grant|snapshot|watermark|debounce|session\.idle)\b/i,
-  /\bcontains?\s+\d+\s+(points|entries|memories|records)\b/i,
-];
-
+// Thin STRUCTURAL backstop only — a malformed-output guard, NOT a second
+// classifier. The LLM gate (EXTRACTION_GATE.md) owns "is this durable?". We used
+// to also run a keyword blocklist here, but it was both over-aggressive (silently
+// dropping legit infra facts mentioning "qdrant"/"api", and durable dated facts
+// like a visa-expiry "2025-11-29") and a maintenance sink, so it was removed:
+// topical judgement is the judge's call, not a regex's.
 function shouldRejectStoredMemory(text: string): boolean {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return true;
   if (normalized.length > 220) return true;
   const sentences = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
   if (sentences.length > 2) return true;
-  return BAD_MEMORY_PATTERNS.some((re) => re.test(normalized));
+  return false;
 }
 
 export function normalizeFactText(text: string): string {
@@ -144,8 +148,10 @@ async function findExactMemoryMatch(text: string): Promise<ExactMemoryMatch | nu
   return null;
 }
 
-/** True if `text` carries an explicit "记住 / remember" instruction (code spans
- * stripped first so a keyword inside a fenced block doesn't trigger). */
+/** Loose: true if `text` mentions a "记住 / remember"-type word (code spans
+ * stripped first so a keyword inside a fenced block doesn't trigger). This only
+ * triggers an early extraction run and hints the judge — it does NOT decide
+ * whether the request is genuinely explicit; the LLM gate does that. */
 export function detectKeyword(text: string): boolean {
   const stripped = text.replace(CODE_BLOCK_RE, "").replace(INLINE_CODE_RE, "");
   return CN_KEYWORD_RE.test(stripped) || EN_KEYWORD_RE.test(stripped);
@@ -217,7 +223,10 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
     return { status: "skipped", reason: "no-fresh" };
   }
 
-  const explicit = opts.consumeExplicit
+  // A loose remember-keyword HINT — it triggers/short-circuits the run and is
+  // passed to the judge as advisory context. It does NOT decide explicitness;
+  // the LLM gate judges whether the excerpt is a genuine save request.
+  const keywordHint = opts.consumeExplicit
     ? opts.consumeExplicit()
     : fresh.some((m) => m.role === "user" && detectKeyword(m.text));
   const transcript = fresh
@@ -226,9 +235,9 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
     .join("\n\n")
     .slice(-MAX_TRANSCRIPT_CHARS);
 
-  // Explicit remember/记住 should still be judged even when the excerpt is very
-  // short; the user already singled this fact out for memory.
-  if (!explicit && transcript.trim().length < MIN_TRANSCRIPT_CHARS) {
+  // When a remember-keyword is present, judge even a very short excerpt — the
+  // user may have singled out a one-line fact. The judge still gates it.
+  if (!keywordHint && transcript.trim().length < MIN_TRANSCRIPT_CHARS) {
     writeWatermark(root, sessionID, latestID);
     return { status: "skipped", reason: "too-short" };
   }
@@ -237,7 +246,10 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
   // Disabled (no key / down): leave watermark unmoved so we retry next turn.
   if (!mem) return { status: "skipped", reason: "no-memory" };
 
-  const source = explicit ? "explicit" : "auto-idle";
+  // Provenance tag for the audit snapshot: whether this run was keyword-triggered
+  // ("explicit") or a plain idle pass ("auto-idle"). It records the TRIGGER, not
+  // a semantic claim — the judge owns the actual capture decision.
+  const source = keywordHint ? "explicit" : "auto-idle";
 
   // Pull existing memories semantically near this excerpt as advisory context for
   // the judge. Final dedup is fact-level and deterministic at write time.
@@ -254,7 +266,7 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
     existing = [];
   }
 
-  const decisions = await judge(transcript, existing, explicit);
+  const decisions = await judge(transcript, existing, keywordHint);
 
   // sessionId is provenance metadata, NOT runId — long-term user memory is one
   // pool keyed by user_id so facts dedup across sessions AND runtimes; a
@@ -273,7 +285,7 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
         const exact = await findExactMemoryMatch(d.text);
         if (exact) {
           if (exact.memory !== d.text) {
-            await mem.update(exact.id, { text: d.text });
+            await mem.update(exact.id, d.text);
             wrote++;
           }
           batchFactKeys.add(factKey);
@@ -286,7 +298,7 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
           infer: false,
         });
       } else {
-        await mem.update(d.id, { text: d.text });
+        await mem.update(d.id, d.text);
       }
       batchFactKeys.add(factKey);
       wrote++;
