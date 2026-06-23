@@ -7,9 +7,14 @@ description: Get SEO data from Semrush for domains and keywords: domain overview
 
 Load `web-access`
 
-Then visit: https://sem.3ue.co/home
+Readiness is about **login state**, not the dashboard UI. Test it by navigating directly to a real report URL from the Known URL Formats table (e.g. open `https://sem.3ue.co/analytics/keywordoverview/?q=test&db=us`) and checking whether report data renders:
 
-**IMPORTANT**: Confirm if the website open correctly. If you got redirected to the login page, find credentials from `./notes` and log in manually. After successful login, click "打开" to enter the main dashboard. Only after you can see the dashboard, the skill is ready to use. If you cannot log in successfully, stop and report the issue.
+- **Report data renders** → ready. Proceed; do not visit the dashboard.
+- **Redirected to the login page** (`dash.3ue.co/...#/login`) → find credentials in `./notes/credentials/semrush.md`, fill `#input-username` / `#input-password`, click 登录. After login, go **straight to the report URL again** — it now works.
+
+**Do NOT gate readiness on the dashboard's `打开` button.** That button opens an `about:blank` popup that often never navigates (known-broken); waiting for it will hang the skill. The user-center dashboard (`dash.3ue.co/.../home`) is only needed to log in or check the subscription — never as a required step to reach reports.
+
+If login fails (bad credentials, device-limit lockout — Semrush caps simultaneous devices on the shared account), stop and report the issue.
 
 ## Export via UI (split workflow)
 
