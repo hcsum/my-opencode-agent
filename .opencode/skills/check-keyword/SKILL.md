@@ -5,7 +5,7 @@ description: Check the SEO potential of a keyword by gathering data from various
 
 ## Objective
 
-Fill `./notes/my-keywords.csv` for a given keyword. Check the csv headers for the required fields and fill in the information where applicable. NEVER delete or modify existing entries for other keywords, only append new row or update entries for the current keyword. Respect the existing format and columns in the CSV file.
+Fill a keyword-research list for a given keyword. The file lives under the `notes` repo. Reuse the existing list there if one already exists; otherwise create one in that location. Check the headers for the required fields and fill in the information where applicable. NEVER delete or modify existing entries for other keywords, only append new row or update entries for the current keyword. Respect the existing format and columns in the file.
 
 ## Tools to use
 
