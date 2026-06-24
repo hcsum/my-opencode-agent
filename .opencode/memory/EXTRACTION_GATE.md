@@ -12,6 +12,31 @@ restate it by pointing at today's deliverable (this resume / this PDF / this
 backlink run / this report), it FAILS — DROP it. If it stands on its own, it may
 pass.
 
+WHO SAID IT — attribute by the SPEAKING TURN, not by sentence content:
+A claim ABOUT THE USER (who he is, what he prefers, wants, is interested in,
+decided) is only durable if a USER turn is its evidence. A sentence the ASSISTANT
+authored — even phrased as a clean fact like "User wants X" or "User is interested
+in Y" — is the assistant's own restatement/analysis, NOT user evidence; DROP it
+unless the user actually stated or confirmed it in a user turn.
+EXCEPTION — objective operational `reference` facts are KEPT no matter who said
+them. A command, host, endpoint, dependency, or how-to the assistant DISCOVERED
+while working (e.g. "Browserbase requires playwright-core installed", "the deploy
+runs as the deploy user") is an objective fact about the SYSTEM, not a claim about
+the user — KEEP it. The speaker rule restricts only user-preferences/wants/
+interests/goals/decisions, never objective operational facts. When in doubt about
+a user-CLAIM with no user-turn behind it, DROP; when in doubt about an objective
+operational fact, KEEP.
+
+TRUTH, NOT OPEN LOOPS (applies REGARDLESS of who stated it, user included):
+Memory holds what is STABLY TRUE about the user. A statement of what he wants to
+DO, track, monitor, follow up, build, or work on is an open loop — a task — and
+belongs in the todo system, not memory. "wants to track X", "wants to monitor the
+USD balance", "wants to follow up on the PR/link/number", "plans to do Y" → DROP,
+EVEN when the user says it himself. Durable memory is what remains true AFTER the
+task is closed, not the intention to act. (A standing WORKING-STYLE preference —
+"always reply in English" — is durable feedback and stays; an intention to track
+or do a specific thing is not.)
+
 CAPTURE these durable categories (each candidate must still pass the gate above):
 - user: who the user is — role, identity, stable preferences, accounts, tools.
 - feedback: a STANDING way of working the user wants by default — e.g. "always
@@ -39,6 +64,12 @@ a request ("remember when we…", "I can't remember…", "do you remember…"), 
 still drop pure task-episodic noise even when a keyword is present.
 
 FORM RULES FOR ANY MEMORY THAT PASSES:
+- SELF-CONTAINED: the stored fact must be understandable standalone, months later,
+  with no memory of this conversation. Carry the minimal scope it needs — its
+  subject and the condition under which it applies — so a bare line like
+  "Browserbase works fully with Semrush" instead reads "Browserbase (the headless
+  browser used for SEO scraping) works for Semrush automation". Add ONLY the
+  subject + when-it-applies; never rationale, history, or "why this matters".
 - One memory = ONE fact only. Do not combine multiple observations into a profile,
   narrative, or timeline.
 - Use the user's own stable fact in plain terms. Do NOT write process summaries,
@@ -59,6 +90,12 @@ HARD DROPS (never record these):
 - General world knowledge, or facts trivially readable from the current repo's
   code. (A durable operational fact the user relies on — an SSH host, a deploy
   step — is a `reference` worth keeping even if it also appears in a doc.)
+- RESEARCH FINDINGS about the external world — a competitor/product's features
+  or business model, market or keyword/SERP analysis, a topic conclusion, "what
+  we learned about X". This is external knowledge; it belongs in the llm-wiki,
+  NOT in user memory. Memory is facts about the USER, not about the world he is
+  researching. Only the user's own DECISION drawn from that research (stated in a
+  user turn, durable) may pass — never the findings themselves.
 - Speculation — only what the user actually stated.
 - Operational LOGS or workflow recaps such as "User asked/instructed/committed/
   pushed/debugged/researched ...", "The deliverable/report/summary was ...", or

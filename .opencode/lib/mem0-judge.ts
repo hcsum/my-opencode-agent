@@ -21,9 +21,13 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY ?? "";
 const JUDGE_MODEL = process.env.MEM0_LLM_MODEL ?? "gemini-2.5-flash-lite";
 const GEMINI_BASE = process.env.GEMINI_API_BASE ?? "https://generativelanguage.googleapis.com/v1beta";
 
+// `text` is the self-contained form actually stored/shown (subject + scope, per
+// the gate's SELF-CONTAINED rule). `core` is the atomic bare claim used ONLY as
+// the dedup key, so two differently-enriched phrasings of the same fact still
+// collide instead of accumulating as near-duplicates.
 export type Decision =
-  | { action: "ADD"; text: string }
-  | { action: "UPDATE"; id: string; text: string };
+  | { action: "ADD"; text: string; core: string }
+  | { action: "UPDATE"; id: string; text: string; core: string };
 
 export interface ExistingMemory {
   id: string;
@@ -45,8 +49,16 @@ const OUTPUT_CONTRACT = `
 ## OUTPUT CONTRACT
 Return ONLY a JSON object of the form {"memories": [ ... ]} and nothing else.
 Each array item is exactly one of:
-  {"action": "ADD", "text": "<one durable fact, shortest faithful phrasing>"}
-  {"action": "UPDATE", "id": "<id of an existing memory listed below>", "text": "<the refined fact>"}
+  {"action": "ADD", "core": "<atomic bare claim>", "text": "<self-contained fact>"}
+  {"action": "UPDATE", "id": "<id of an existing memory listed below>", "core": "<atomic bare claim>", "text": "<self-contained fact>"}
+Every item has TWO phrasings of the SAME single fact:
+- "core": the atomic bare claim, shortest faithful phrasing, NO scope clause —
+  used only as a dedup key (e.g. "Browserbase works with Semrush").
+- "text": the SELF-CONTAINED form to store — the same fact plus the minimal
+  subject + when-it-applies scope so it reads standalone months later (e.g.
+  "Browserbase (headless browser used for SEO scraping) works for Semrush
+  automation"). Per the SELF-CONTAINED form rule: add ONLY subject + scope, never
+  rationale/history/why.
 Rules:
 - Default to {"memories": []}. For a normal coding/research/ops session, return exactly that.
 - One fact per item — never bundle several facts into one text.
@@ -131,13 +143,16 @@ export async function judge(
   const out: Decision[] = [];
   for (const it of items) {
     if (!it || typeof it !== "object") continue;
-    const obj = it as { action?: unknown; id?: unknown; text?: unknown };
+    const obj = it as { action?: unknown; id?: unknown; text?: unknown; core?: unknown };
     const text = typeof obj.text === "string" ? obj.text.trim() : "";
     if (!text) continue;
+    // `core` is the dedup key; if the model omitted it, fall back to `text` so a
+    // missing field degrades to the old text-based dedup rather than an empty key.
+    const core = typeof obj.core === "string" && obj.core.trim() ? obj.core.trim() : text;
     if (obj.action === "UPDATE" && typeof obj.id === "string" && validIds.has(obj.id)) {
-      out.push({ action: "UPDATE", id: obj.id, text });
+      out.push({ action: "UPDATE", id: obj.id, text, core });
     } else if (obj.action === "ADD") {
-      out.push({ action: "ADD", text });
+      out.push({ action: "ADD", text, core });
     }
     // An UPDATE with an unknown/hallucinated id is dropped (never blind-write a
     // random memory id); a malformed item is skipped.

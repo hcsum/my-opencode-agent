@@ -334,3 +334,46 @@ C：在 `memory.ts` 已有的 `chat.message` hook 里，对每条用户消息自
 1. **单次全量 compaction 有 size ceiling**：当前实现把全库一次性喂给小模型；超 `MAX_COMPACT_CHARS` 会跳过并等待下一个周期。后续需要做 clustering / batched compaction，而不是单 pass。
 2. **解 main↔notes 路径耦合**：`opencode.json` 的 `instructions` 硬编码了 `notes/memory/MEMORY.md`（main repo committed 文件伸进 notes repo 内部布局），且该路径与 plugin 里的 `MEMORY_SUBDIR = "notes/memory"` **重复**。干净解法：把 recall 注入从 opencode.json 挪进 plugin（启动时读 `MEMORY.md` 经 system-prompt hook 注入），从 `instructions` 删掉该 notes 路径，路径来源走 env/const。效果：notes 路径从两处收敛到一处且可配置。代价：recall 从「零代码原生 instructions」变成「plugin 注入」。
 3. **EXTRACT_SYSTEM / COMPACT_SYSTEM 与 PROTOCOL.md 去重**：`memory.ts` 里的 prompt 与 `PROTOCOL.md` 内容重叠（分类、高门槛、去重/保守规则），有 drift 风险。改为运行时读 `PROTOCOL.md` 作单一来源。
+
+---
+
+## 11. 抽取边界与两段式 enrich（2026-06-24）
+
+> 背景：§1–§9 描述的是最初的**文件式 MVP**（`notes/memory/*.md` 落盘）。系统后续 pivot 到 **Plan A：mem0/Qdrant 只当存储，抽取由我们自己 own**——`mem.add(infer:true)` 的高 recall 抽取被换成一次受 gate 约束的 Gemini judge 调用（`temperature:0`，确定性），ADD/UPDATE 决策再以 `infer:false` 落库，junk 不进 Qdrant。完整背景见 `notes/my-files/mem0-extraction-recall-override.md`。本节记录在该架构上对**判定边界**和**去重/上下文**的两组改动。
+>
+> 相关文件：`.opencode/memory/EXTRACTION_GATE.md`（gate，作为 judge 的 system prompt 注入）、`.opencode/lib/mem0-judge.ts`（judge + output contract）、`.opencode/lib/mem0-extract.ts`（写路径 + 去重）。
+
+### 11.1 问题：over-recall 在自家 pipeline 复现
+
+审计本地 Qdrant 发现约一半是噪音，且和 mem0 上游 over-recall（issue #5730）同型：
+
+1. **角色归因失效**：我（assistant）在整理 todo / 做调研时写的「User wants to track X」「User is interested in Y」被 judge 当成用户事实抽走——和已 merge 的 mem0 PR #5643 同一类 bug（抽取前角色信息丢失，assistant 的话被洗成 user fact）。
+2. **research 灌库**：每做一次竞品/SEO/市场调研，passive capture 就把整段发现（关于外部世界，不是关于用户）当 durable fact 存进来。
+3. **open-loop 当事实**：「想 track 某个 PR / 链接 / 数字 / 余额」这种待办意图被当成稳定事实。
+4. **改写重复**：去重只在「整句精确匹配」上做，措辞一变就漏（同一事实存了 3 份）。
+5. **缺上下文**：form rule 死守「最短」，把让事实可复用的 scope 也削没了（`Browserbase works fully with Semrush` 脱离当时对话不可用）。
+
+### 11.2 Gate 改动（边界）
+
+在 `EXTRACTION_GATE.md` 加四条，按「谁说的 / 是不是事实 / 属不属于 user memory / 形式」分别卡：
+
+- **WHO SAID IT（按 speaking turn 归因，不按句意）**：关于用户的 claim（偏好/想要/兴趣/决定）必须有 **user turn** 证据；assistant 转写的「User wants X」DROP。**例外**：客观操作 `reference`（命令/host/依赖/how-to，assistant debug 时发现的）无论谁说都 KEEP——它是关于系统的客观事实，不是关于用户的主张。这条同时切掉 §11.1 的 (1) 和大部分 (2)。
+- **TRUTH, NOT OPEN LOOPS（与谁说无关，含用户自己）**：「想做/track/monitor/follow up/build X」是开环任务，归 todos.md，DROP——**即使用户自己说**。durable memory 是任务关掉后仍为真的东西。standing 工作风格偏好（「总是用英文回」）仍留。
+- **RESEARCH → wiki**：外部产品/市场/SERP/题材的研究发现归 llm-wiki，不进 user memory；只有用户基于研究做的**决定**（user turn，durable）可过。
+- **SELF-CONTAINED（form rule）**：存的 fact 要能脱离对话独立读懂，只加「主语 + 适用条件」，禁止 rationale/history/why。
+
+### 11.3 两段式 enrich + 去重锚到 core
+
+判定（要不要存，精度敏感）与自包含（补 scope，召回敏感）拆成两层，互不污染：
+
+- judge 每条决策返回 `{core, text}`（`mem0-judge.ts` 的 `Decision` + OUTPUT CONTRACT）：
+  - `text` = 自包含富版，**实际存储/展示**（主语 + scope）。
+  - `core` = 原子裸版，**只做去重 key**。
+- 写路径（`mem0-extract.ts`）：`factKey = hash(core)`，`core` 一并存进 metadata，fallback scan 也比 `core`（`payloadDedupKey`）。于是同一事实的不同 enriched 措辞会在确定性去重层撞重，不再各存一份——治 §11.1 (4)。
+- 注意这只拓宽了**确定性（exact-on-core）**去重；语义近重仍只由 LLM 兜（judge 写时看 top-`DEDUP_SEARCH_LIMIT` 条 + compaction 周期全库扫）。没有确定性的语义去重，是有意为之。
+
+### 11.4 验证与缺口
+
+- judge probe（`temperature:0` 确定性重放）确认：assistant 转写的 user-wants、research 发现、SEO 簇分析、用户自述的 open-loop 均 DROP；真用户偏好、assistant 发现的操作 reference 均 KEEP，且 context-poor 的 reference 被自动补 scope。
+- 一次性清库：74 → 14（噪音含一批从「设计本记忆系统」对话里抓出来的 meta，及一条与中文默认冲突的 `English-only responses` 错误事实）。
+- 已知缺口：(a) judge 的 UPDATE 分支只更新 `text`，不刷新该条的 `core` metadata（边缘，影响小）；(b) compaction 的 `merge` 仍是 no-op（`mem0-memory.ts`），近重靠 `delete`/`rewrite` 清；(c) 存量 legacy 条目无 `core` 字段，按 `text` 回退去重，新规则只管往后。

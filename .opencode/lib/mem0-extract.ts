@@ -83,6 +83,14 @@ function payloadText(payload: Record<string, unknown> | null | undefined): strin
   return "";
 }
 
+// The string a stored point dedups ON: its atomic `core` if present (new path),
+// else the stored text (legacy entries predating the core/text split). Dedup
+// compares cores so two differently-enriched phrasings of one fact still collide.
+function payloadDedupKey(payload: Record<string, unknown> | null | undefined): string {
+  if (payload && typeof payload.core === "string" && payload.core.trim()) return payload.core;
+  return payloadText(payload);
+}
+
 async function qdrantScroll(body: Record<string, unknown>) {
   const res = await fetch(`${QDRANT_URL}/collections/${COLLECTION}/points/scroll`, {
     method: "POST",
@@ -98,11 +106,11 @@ async function qdrantScroll(body: Record<string, unknown>) {
   };
 }
 
-async function findExactMemoryMatch(text: string): Promise<ExactMemoryMatch | null> {
-  const normalized = normalizeFactText(text);
+async function findExactMemoryMatch(core: string): Promise<ExactMemoryMatch | null> {
+  const normalized = normalizeFactText(core);
   if (!normalized) return null;
 
-  const factKey = factKeyForText(text);
+  const factKey = factKeyForText(core);
   try {
     const exact = await qdrantScroll({
       limit: 1,
@@ -136,7 +144,8 @@ async function findExactMemoryMatch(text: string): Promise<ExactMemoryMatch | nu
     for (const point of points) {
       const memory = payloadText(point.payload);
       if (!memory) continue;
-      if (normalizeFactText(memory) === normalized && point.id) {
+      // Compare on the stored point's dedup key (its `core`, or legacy text).
+      if (normalizeFactText(payloadDedupKey(point.payload)) === normalized && point.id) {
         return { id: String(point.id), memory };
       }
     }
@@ -278,11 +287,13 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
     if (shouldRejectStoredMemory(d.text)) continue;
     const normalizedText = normalizeFactText(d.text);
     if (!normalizedText) continue;
-    const factKey = factKeyForText(d.text);
+    // Dedup on the atomic `core`, not the enriched `text`, so two differently
+    // scoped phrasings of the same fact collide instead of both landing.
+    const factKey = factKeyForText(d.core);
     if (batchFactKeys.has(factKey)) continue;
     try {
       if (d.action === "ADD") {
-        const exact = await findExactMemoryMatch(d.text);
+        const exact = await findExactMemoryMatch(d.core);
         if (exact) {
           if (exact.memory !== d.text) {
             await mem.update(exact.id, d.text);
@@ -291,10 +302,11 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractResult
           batchFactKeys.add(factKey);
           continue;
         }
-        // infer:false → store the fact verbatim; we already did the extraction.
+        // infer:false → store the enriched fact verbatim; we already extracted.
+        // `core` rides along in metadata as the stable dedup key.
         await mem.add([{ role: "user", content: d.text }], {
           userId: USER_ID,
-          metadata: { source, sessionId: sessionID, runtime, factKey },
+          metadata: { source, sessionId: sessionID, runtime, factKey, core: d.core },
           infer: false,
         });
       } else {
