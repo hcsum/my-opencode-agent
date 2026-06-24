@@ -24,7 +24,7 @@ for (const method of ["log", "info", "debug", "warn"] as const) {
  * Lazily-constructed mem0 `Memory` instance shared by the auto-memory plugin
  * (mem0-memory.ts) and the one-off backfill script (scripts/mem0-backfill.ts).
  *
- * Backend (see docs/mem0-integration-plan.md): self-hosted mem0/oss →
+ * Backend (see docs/memory-feature-design.md): self-hosted mem0/oss →
  *   - Qdrant (docker) for the vector store, data stays on our machine/VPS.
  *   - Gemini for both embeddings and the cheap extraction LLM (single key).
  *

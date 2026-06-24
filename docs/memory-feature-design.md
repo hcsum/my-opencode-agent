@@ -1,379 +1,247 @@
-# Agent Memory 设计文档
+# Pikachu Agent Memory — 设计与演进
 
-> 目标：给 **OpenCode 客户端交互会话**（`pnpm opencode` / `opencode` 跑在本 repo 上）加一套持久记忆，让agent能自动记住对话里值得长期保留的事情，并在后续会话需要时召回。
+> 状态：已实现，仍在收紧规则。最后大改 2026-06-24。
 >
-> 设计原则：**模仿 Claude Code 的 memory，但做得更简单**。单用户，文件式 + git，不上向量库/图数据库/外部服务。
+> 这是 agent 自动记忆层的**单一设计文档**（合并了早期的 file-based 设计稿与 mem0 集成方案）。它记录：当前实现、为什么这么做、一路上的取舍与踩坑、已知缺口、不要再走的岔路。
 >
-> 范围：本设计**只覆盖 OpenCode 交互客户端路径**。Gmail bridge 路径暂不处理（同一套记忆文件未来可被它复用，但不在本期目标内）。
-
-状态：MVP 已落地。初稿 2026-06-05，落地后更新 2026-06-06（见 §10）。
+> 作用域：**只覆盖关于「用户」的自动长期记忆这一层**（`.opencode/plugin/mem0-memory.ts` + `.opencode/lib/mem0-*.ts`）。`notes/knowledge/`（llm-wiki，世界知识）、`todos.md`、`user.md`、`credentials/` 都不归这里管，边界见 §4 与 §9。
 
 ---
 
-## 1. 我们在抄什么：Claude Code memory 的真实机制
+## 0. 一句话定位
 
-先把被模仿对象拆清楚，避免抄错。Claude Code 的 memory 不是向量检索系统，而是 **「文件 + 协议」**：
-
-1. **存储**：一个 memory 目录，**每条事实一个 markdown 文件**，带 frontmatter：
-   ```markdown
-   ---
-   name: <kebab-case-slug>
-   description: <一行摘要，用于召回时判断相关性>
-   metadata:
-     type: user | feedback | project | reference
-   ---
-   <事实正文；feedback/project 追加 **Why:** 和 **How to apply:** 行；用 [[name]] 互链>
-   ```
-2. **索引**：一个 `MEMORY.md`，每条记忆一行（`- [Title](file.md) — hook`）。**每个会话开始时把整个 MEMORY.md 注入 context**。正文不全注入——只有索引行看起来相关时，模型才用 read 工具展开对应文件。
-3. **召回（read）**：靠「索引常驻 context + 按需展开正文」。没有 embedding，没有打分，靠模型读索引判断相关性。
-4. **捕获（write）**：**模型驱动**。system prompt 里写了一套 memory 协议（何时记、记什么类型、格式、去重、写完更新 MEMORY.md 索引），模型在对话过程中自己决定调用 Write 工具落盘。没有独立的「会话结束后 extraction LLM pass」——捕获就是模型在对话里顺手写文件。
-5. **分类法**：`user`（用户是谁/偏好）、`feedback`（怎么干活的纠正与确认，带 why）、`project`（在做的事/约束）、`reference`（外部资源指针）。
-6. **维护**：写前先查有没有已覆盖的文件 → 更新而非新建；发现错的就删。
-
-**关键洞察**：Claude Code 的「memory tool」本质就是「模型按协议写 markdown 文件」+「索引每次注入」。所以在 OpenCode 上我们**不需要发明新机制**，只要找到两个挂载点：(a) 每会话注入索引，(b) 给模型一套写文件的协议。两者 OpenCode 都原生支持。
+一套 **LLM-extracted、pull-based** 的长期记忆：记的是关于**用户本人和怎么跟他协作**的耐久事实；存储用自托管 mem0/Qdrant；但「记什么」由我们自己 own 的一道低召回 gate 判定，mem0 被压成纯 vector store。设计的全部张力可以归一句话——**自动捕获（要省事）和真相质量（要干净）天然对立**，本文档大半在记我们怎么在这条线上做取舍。
 
 ---
 
-## 2. OpenCode 提供的扩展点（已核实）
+## 1. 当前架构
 
-核实自 `node_modules/@opencode-ai/sdk` 与 `.opencode/node_modules/@opencode-ai/plugin@1.4.8` 的类型定义，以及现有 `.opencode/plugin/scheduler.ts`。
+| 关注点 | 当前选择 |
+|---|---|
+| 向量库 | Qdrant（Docker），collection `pikachu_memory`，数据留在本机 / VPS |
+| embeddings | Gemini `gemini-embedding-001`，1536 维（`embeddingDims` 显式 pin，省一次探测调用） |
+| 判定 / 抽取模型 | Gemini `gemini-2.5-flash-lite`（可被 `MEM0_LLM_MODEL` 覆盖） |
+| 认证 | 只用 `GOOGLE_API_KEY`（embeddings + 抽取同一把 key），不碰主会话的 OpenAI OAuth |
+| mem0 自带 SQLite history | 关闭（`disableHistory:true`）——Qdrant + SNAPSHOT 就是审计面，避免 repo 里多一个 `memory.db` |
+| 召回 | `search_memories` 工具，pull-based，默认 top-k 5 |
+| store of record | mem0 / Qdrant，**不是** notes 文件（snapshot 只是派生审计） |
+| 抽取归属 | **Plan A：我们自己 own**（`mem.add(infer:false)`），mem0 的 `infer:true` 抽取器从不被调用 |
 
-### 2.1 召回挂载点
+**容错是第一原则**：记忆永远不能弄垮一个 turn。没 key → `getMemory()` 返回 null，记忆静默降级；judge 出错 / 网络错 / 解析失败 → 返回 `[]`（什么都不写）；Claude hook 永远 `exit 0`。坏的一次抽取宁可漏记，绝不阻塞或污染。
 
-- **`config.instructions?: string[]`**（SDK 配置，注释原文 "Additional instruction files or patterns to include"）。声明的文件/glob 会在**每个 session 启动时加载进 context**。
-  → **这就是零代码的索引注入**：把 `notes/memory/MEMORY.md` 加入 `instructions`，等价于 Claude Code 每会话注入 MEMORY.md。
-- **`experimental.chat.system.transform(input, output: { system: string[] })`**（plugin hook）：每轮可改写 system prompt 数组。
-  → 升级路径：想做「自动把相关记忆正文也注进去」而不只靠模型展开时，用这个 hook 动态拼接。MVP 不需要。
+### 1.1 双 runtime，单一共享 store
 
-### 2.2 捕获挂载点
+同一个 Qdrant store（按 `user_id` 共享）被两个 runtime 写读：
 
-- **模型 + 现有 `write`/`edit` 工具**：模型按协议直接写 `notes/memory/*.md`。无需新工具。
-- **`tool: { ... }`**（plugin hook，scheduler 已在用）：可选注册 `memory_save` / `memory_search` 自定义工具，让意图更显式、便于约束格式。属于「锦上添花」，非必需。
-- **`event(input: { event })`**（plugin hook）：能收到 OpenCode 全量事件（含 `session.idle` 等）。
-  → 升级路径：想做「会话结束后异步抽取」时，监听 idle 事件触发一次后台抽取 pass。**MVP 不做**（见 §6）。
+- **OpenCode 插件**（`mem0-memory.ts`）：长驻进程，挂 `session.idle` / `session.deleted` / `chat.message` hook，并 own snapshot + compaction 维护（因为维护的 churn 计数器是内存态，只有长驻进程能持有）。
+- **Claude Code Stop-hook**（`mem0-claude-hook.ts`）：每个 turn 结束 fork 一个新进程，把 transcript 喂同一套抽取逻辑；**不**跑 snapshot/compaction（一次性进程没有长期 churn 状态）。召回侧对应 `mem0-claude-mcp.ts` 这个 stdio MCP server（在 repo 根的 `.mcp.json` 注册）。
 
-### 2.3 现成范式
+两边都复用 `mem0-extract.ts`（抽取行为）和 `mem0-client.ts`（store），所以行为不会漂移；一边写的记忆另一边能召回。
 
-`.opencode/plugin/scheduler.ts` 已演示：plugin 是 `async (input) => Hooks` 函数，返回对象里挂 `tool` / hook。新增记忆能力可以走同一个 plugin 文件或新开一个，列进 `.opencode/opencode.json` 的 `plugin` 数组。
+### 1.2 端到端数据流
+
+```
+捕获（写）
+  session.idle / session.deleted / "记住" 关键词
+    └─ debounce 后 extract(sessionID)
+         └─ 读 watermark 之后的新消息 → 拼 transcript
+              └─ mem.search(transcript) 取 top-12 邻近记忆作去重上下文
+                   └─ judge(transcript, existing)   ← Gemini temp0，gate 作 system prompt
+                        └─ 决策 [{action, core, text}]
+                             └─ 结构兜底 + core 精确去重 → mem.add(infer:false)
+                                  └─ 推进 watermark
+
+召回（读）—— pull-based
+  模型按 PROTOCOL.md 主动调 search_memories(query)
+    └─ mem.search(query, {user_id}) → top-k 事实
+       （什么都不自动注入；不问就什么都看不到）
+
+维护（异步，仅 OpenCode 长驻进程）
+  churn / interval 触发
+    ├─ pruneAssistantAttributed（确定性 Qdrant filtered-delete）
+    ├─ snapshot → notes/memory/SNAPSHOT.<agent>.md（审计）
+    └─ compaction（Gemini 保守 pass：delete/rewrite/flag）
+```
 
 ---
 
-## 3. 设计
+## 2. 捕获：Plan A — 我们自己 own 抽取
 
-### 3.1 记忆存哪里
+### 2.1 单一写入器 + 触发条件
 
-`notes/memory/`，理由：
+只有一个写入入口：插件里的 `extract(sessionID)` → `runExtraction()`。所有触发最终都汇到这一个 writer，**避免双写竞争**。触发时机只有三个：
 
-- `notes/` 是独立 git repo，已有 push 自动化 → 记忆天然持久化、可同步、可在容器/多机间共享。
-- 与现有 `notes/knowledge/`（llm-wiki）同级，结构一致、心智负担低。
-- 人类可读、可手改、git 可审计 diff —— 命中「文件式 + git」选型。
+1. **`session.idle`** — 默认 debounce `60s`（用户停下来 ≈ 本轮告一段落才抽，不是每个 turn 都调 LLM）。
+2. **用户消息含 `记住 / remember`** — 不单独写一条，而是把**同一个** extractor 提前触发（debounce `5s`），并把这批标 `source:"explicit"`。单写入器、单 watermark → 一条消息只被处理一次（早期 explicit/idle 双写竞争的教训）。
+3. **`session.deleted`** — 立刻 flush 一次。
 
-```
-notes/memory/
-  MEMORY.md            # 索引：每条记忆一行，会话启动自动注入
-  user-*.md            # type: user
-  feedback-*.md        # type: feedback
-  project-*.md         # type: project
-  reference-*.md       # type: reference
-```
+按 session 的只有 timer / pending-explicit 标记 / watermark；最终记忆池**不按 session 隔离**，而是按 `user_id` 共享，`sessionId` 仅作 provenance 写进 metadata。
 
-文件名用 `name` slug；前缀只是肉眼分组，非强制。
+> **真实限制（不是假设）**：这套不是「每轮强制检查」。用户刚聊完就直接关 TUI / kill 进程——还没等到 `session.idle`、也没走到 `session.deleted`——这次 session 很可能根本不触发 memory write。watermark 保证下次 resume 能补抽，但当次会漏。
 
-### 3.2 文件格式
+### 2.2 judge：把「抽取 + 门卫」收进一次 LLM 调用
 
-沿用 §1 的 frontmatter schema（直接复用 Claude Code 的，因为已被验证好用，且用户已熟悉）。`MEMORY.md` 每行格式：
+核心改动（Plan A）：**不再调 mem0 的 `infer:true` 高召回抽取器**。改为 `mem0-judge.ts` 里一次 Gemini 调用（`temperature:0`，决策确定、可复现），system prompt = `EXTRACTION_GATE.md` + 一段 OUTPUT CONTRACT，输入是 transcript + 已存的邻近记忆（去重上下文）。它直接吐结构化决策：
 
 ```
-- [Title](file.md) — 一句钩子，让模型判断相关性
+{action:"ADD",    core:"<原子裸事实，去重 key>", text:"<自包含富版，实际入库>"}
+{action:"UPDATE", id:"<已存记忆 id>", core, text}
 ```
 
-### 3.3 召回机制（read path）
+决策以 `infer:false` 落库——mem0 不再二次判断，junk 根本不会被写出来再删。这是相对「先写后删」的关键收益：**抽取和 gate 塌缩进同一次调用，没有第二次 LLM call，没有 write-then-delete**。
 
-**MVP = 纯 `instructions` 注入**：
+### 2.3 两段式 enrich + 去重锚到 core
 
-1. `.opencode/opencode.json` 设 `"instructions": [".opencode/memory/PROTOCOL.md", "notes/memory/MEMORY.md"]`（协议在 main repo、索引在 notes；见 §10.1）。
-2. 每个 OpenCode 会话启动 → MEMORY.md 索引 + 写入协议一并进 context。
-3. 模型遇到相关话题 → 用 read 工具展开对应记忆文件正文。
+「值不值得记」（精度敏感）和「让事实自包含」（召回敏感）拆成两件事，互不污染：
 
-无代码、无服务、无 embedding。等记忆条数多到「索引太长 / 模型挑不准」再考虑 §6 的语义召回升级。
+- `core` = 原子裸事实，**只做去重 key**；
+- `text` = 加了「主语 + 适用条件」scope 的自包含版，**实际存储 / 展示**。
 
-### 3.4 捕获机制（write path）—— 目标：真 auto
+写路径（`mem0-extract.ts`）用 `factKey = hash(core)` 去重、把 `core` 一并写进 metadata、fallback scan 也比 `core`。于是同一事实的不同 enriched 措辞会在确定性去重层撞重，不再各存一份。注意这只拓宽了**确定性（exact-on-core）**去重；语义近重仍只由 LLM 兜（judge 写时看 top-`DEDUP_SEARCH_LIMIT≈12` 条 + compaction 周期全库扫）。**没有确定性的语义去重，是有意为之**——「这两条是不是同一个事实」本就不该是 regex 的活。
 
-> 设计目标修订（2026-06-06）：用户要的是**真 auto write**——不喊关键词、也不靠模型边干活边自觉记。
-> 评估过四种触发机制后，结论：只有**后台抽取**能可靠做到真 auto。参考实现 `opencode-supermemory` 的捕获实质只是「关键词正则 → 强制模型调存储工具」，**没有**后台抽取，所以「不喊就不记」。我们要做得比它更进一步。
+### 2.4 写入后的确定性兜底（薄）
 
-**四种触发机制对照**（确定性从低到高）：
+`mem.add()` 前还有一道 `shouldRejectStoredMemory`：**纯结构守卫**——空 / >220 字符 / >2 句直接丢。它**不**做主题判断（那是 judge 的活）。
 
-| 机制 | 做法 | 是否真 auto | 成本 | 采用 |
-|---|---|---|---|---|
-| 1 显式 remember | 用户说「记住」，模型落盘 | 否（手动） | 0 | —（被 4 取代） |
-| 2 模型对话内 checklist | PROTOCOL 锚定 checklist，模型自觉写 | 半（靠模型自觉，不稳） | 0 | ❌ 砍掉（有 3 后冗余） |
-| 3 后台抽取 | `session.idle` 防抖后抽取新消息 | **是** | 每轮对话约一次便宜 LLM 调用 | ✅ 主力 |
-| 4 关键词提前触发 | `chat.message` 正则拦截 → 提前触发同一 extractor | 即时补充 | 0 | ✅ 即时补充 |
+> 演进注记：这层早期是一串关键词黑名单（`User asked/...`、`Qdrant/token/...` 等正则）。后来删掉了，因为它既**误杀**（把含 "qdrant"/"api" 的正经 infra 事实、含 `2025-11-29` 的签证到期日一并丢掉），又是维护负担。主题判断收归 judge，正则只留长度/句数这种不会误判的结构守卫。
 
-**采用方案 = 3（主力）+ 4（即时补充）：**
+---
 
-#### 主力：debounced `session.idle` 后台抽取器
+## 3. 判定边界：`EXTRACTION_GATE.md`
 
-一个 plugin 挂 `event` hook 监听 `session.idle`（每个 turn 结束都会触发）：
+这是当前**最重要的规则文件**，作为 judge 的 system prompt 注入。结构是「一个总闸 + 归因规则 + 四类白名单 + 一串硬删 + 形式规则」：
 
-```
-session.idle 触发
-  └─ 重置防抖定时器（约 60s）
-       └─ 定时器烧到（用户 ~60s 无新输入 = 本轮对话告一段落）
-            └─ 跑一次后台抽取
-```
+- **THE GATE（总闸）**：剥掉当前任务和具体产物，「这个事实下个月、在另一个任务里还成立且有用吗？」只能靠指着今天的交付物复述的 → DROP。
+- **WHO SAID IT（按 speaking turn 归因，不按句意）**：关于用户的 claim（偏好/想要/兴趣/决定）必须有 **user turn** 证据；assistant 转写的「User wants X」DROP。**例外**：客观操作 `reference`（命令/host/依赖/how-to，assistant debug 时发现的）无论谁说都 KEEP——它是关于系统的客观事实，不是关于用户的主张。
+- **TRUTH, NOT OPEN LOOPS（与谁说无关，含用户自己）**：「想做/track/monitor/follow up X」是开环任务，归 todos.md，DROP——即使用户自己说。
+- **四类白名单**：`user`（他是谁/稳定偏好）/ `feedback`（默认协作方式）/ `project`（outlive 当前任务的目标或约束）/ `reference`（可复用的外部指针/操作事实）。
+- **RESEARCH → wiki**：外部产品/市场/SERP/题材的研究发现归 llm-wiki，不进 user memory；只有用户基于研究做的**决定**（user turn）可过。
+- **SELF-CONTAINED（形式）**：存的事实要能脱离对话独立读懂，只加主语 + 适用条件，禁止 rationale/history/why。一条 memory = 一个事实，最短忠实措辞。
+- **HARD DROPS**：assistant 的建议/计划/确认语、任务过程、一次性交付总结、带日期的事件回顾、系统/debug 瞬时状态、recalled memory 再入库（防 feedback loop）、多句大总结。
 
-抽取步骤：
-1. 读「上次水位线（messageID）之后的新消息」——增量，不重读整段。
-2. 连同当前 `MEMORY.md` 索引一起，喂给一个**便宜模型**，按 `PROTOCOL.md` 标准问：「这段对话里有没有值得长期记的 user/feedback/project 事实？已知的别重复。」
-3. 模型吐出结构化 `{action: add|update, type, name, description, body}`。
-4. 落盘到 `notes/memory/*.md` + 更新 `MEMORY.md` 索引，推进水位线。
+---
 
-设计要点（解决成本/重复/延迟）：
-- **防抖 = 一轮对话只抽一次**：`session.idle` 每 turn 都触发，但定时器每次被重置，只在用户真正停下来时才烧到——不是每个 turn 都调 LLM。
-- **增量水位线**：每次只看新消息，token 有界。水位线存 `.data/memory-extract-watermark.json`，key 为 sessionID。
-- **后台异步**：在对话关键路径之外跑，用户不等待。
-- **喂索引做去重**：模型知道哪些已记，不重复刷；name 撞车时走 update 而非新建。
-- **调用便宜模型的方式**：plugin 持有 `ctx.client`（OpencodeClient）→ `client.session.create()` 开临时 headless session、用小模型 `prompt()` 跑抽取、读结果、删除 session。**复用 OpenCode 已配置的 provider，无需额外 API key。**
-- **噪音控制**：抽取质量取决于 PROTOCOL 里「什么值得记」的标准写得够严，否则会记噪音——靠 prompt 调严。
+## 4. 召回：pull-based
 
-#### 即时补充：关键词提前触发
+读取完全 pull-based：模型按 `PROTOCOL.md`（经 `opencode.json` 的 `instructions` 常驻 context）的指示，在需要时主动调 `search_memories` → `mem.search(query, {user_id})` → 默认 top-k 5。**不把整库自动塞回每次对话。**
 
-后台抽取有 ~1 分钟延迟。对「我现在就要记住这个」的场景，同一 plugin 挂 `chat.message` hook：
-- 正则匹配 `记住 / 记一下 / remember / save this / don't forget`（可配置，先剥代码块再匹配，借鉴 supermemory）。
-- 命中 → 不单独写库；而是把同一个 extractor 提前触发，默认 short debounce `~5s`，并把该批次标成 `source:"explicit"`。
+这点是当前方案明确优于早期「整个 `MEMORY.md` 常驻注入」的地方：旧方式上下文成本随记忆条数 **O(n)** 增长，pull-based 是 O(1) 固定成本 + 命中项。代价见 §6 的取舍（重新引入了 blind-spot，靠 PROTOCOL 强约束「拿不准就搜」来缓解）。
 
-| 场景 | 机制 | 延迟 |
-|---|---|---|
-| 你明确要记某事 | 4 关键词提前触发 | 短延迟（默认 ~5s） |
-| 你没说，但聊出了值得记的偏好/事实 | 3 后台抽取 | ~1 分钟（对话停下后） |
+---
 
-#### PROTOCOL.md 的角色
+## 5. 维护：snapshot / prune / compaction
 
-`.opencode/memory/PROTOCOL.md`（main repo，由 `instructions` 加载，常驻 context）描述：四种 type、frontmatter 格式、查重更新而非新建、写完更新 `MEMORY.md` 索引、`[[name]]` 互链、不碰 `notes/user.md`、以及「什么值得记 / 什么是噪音」的判定标准。**后台抽取器和关键词提前触发共用这同一套标准**。
+三层，确定性的在前，LLM 的在后、且被严格压住：
 
-### 3.5 与 llm-wiki / AGENTS.md 的边界（重要）
+1. **`pruneAssistantAttributed`（确定性）**：mem0 偶尔把助手自己的话写成 `attributedTo:"assistant"` 的记忆；直接走 Qdrant filtered-delete 删掉，不劳 LLM，snapshot 前清一次。
+2. **snapshot（审计）**：从 `getAll()` 在 churn(5) / interval(12h) 重建 `notes/memory/SNAPSHOT.<agent>.md`，让 store 可 grep、notes repo 的 sync 能 diff。**按 agent 命名**：local 与 VPS 共享 notes git 但各有独立 Qdrant store，单一共享文件会被两边覆写成不同内容 → sync 时常态冲突；按 `MEM0_AGENT_ID` 命名后各写各的。
+3. **compaction（LLM，保守）**：外接 maintenance pass（非 mem0 原生）。churn(20) / 24h 触发、少于 10 条不跑、超 80k 字符跳过。把全库列成编号文本喂一次 Gemini，只应用 `delete / rewrite / flag`；**`merge` 被硬禁**——即使模型吐 merge，执行层也忽略并打日志。无法判定的矛盾走 `flag` → 落 `CONFLICTS.<agent>.md` 给用户裁决，绝不靠猜删一边。
 
-| | `notes/knowledge/`（llm-wiki） | `notes/memory/`（本设计） | `AGENTS.md` |
+compaction 天生危险，因为它极易从「去重」滑向「改写现实」。当前策略下它本质是「清扫垃圾 + 轻微改写」，**不是知识整理器**。
+
+---
+
+## 6. 关键决策与取舍（give-and-take）
+
+这一节是这套系统真正的「设计」所在——每条都是一次有代价的选择。
+
+**① 召回：eager 全量注入 → pull-based 检索。**
+早期 clone Claude Code，把 `MEMORY.md` 索引每会话 eager 注入。好处是**隐式召回**（不用用户重提，模型自动套用已记偏好）天然在场；代价是 O(n) 上下文。换 mem0 后改 pull-based，省了 O(n)，但重新引入 **blind-spot**（模型得先意识到「这儿可能有记忆」才会搜）。取舍：拿可控的 blind-spot（靠 PROTOCOL「拿不准就搜」+ 语义检索质量缓解）换掉不可控的上下文膨胀。规模小的时候这是对的；真到隐式召回掉太多，升级方向是 hook 自动对每条用户消息检索并注入命中项，而不是退回全量注入。
+
+**② 抽取：用 mem0 的 → 自己 own（Plan A）。**
+mem0 的 `infer:true` 抽取器为最大 recall 调优，社区审计（issue #4573）实测 97.8% 是 junk，而 OSS 上**没法调低 recall**（`custom_instructions` 只能 append，能全量 override 的字段在 #4805 被删）。曾经的决定是「不改成 `infer:false`，怕 mem0 退化成纯 vector 包装层、还得自己补 worth-saving 判定」。后来**推翻了这个决定**：既然规则层和写后清理层本来就在自己手里，不如索性 own 整个抽取——一次 gated 调用直接出决策，junk 不落库。代价是抽取质量的责任全在自己；收益是完全的控制权 + 解耦于 mem0 的 prompt 版本。
+
+**③ gate：精度 vs 召回。**
+太严会丢真正可复用的事实（infra 操作、稳定偏好），太松就记 junk——两边都是失败。用一个总闸统一裁决：「下个月、换个任务还成立且有用吗？」不靠关键词黑名单（会误杀），靠语义判断。
+
+**④ 角色归因——一个反复出现的 bug 类。**
+assistant 在整理 todo / 做调研时写的「User wants X」被当成用户事实抽走，是和已 merge 的 **mem0 PR #5643 同一类 bug**（抽取前角色信息丢失，assistant 的话被洗成 user fact）。对策是 gate 的 WHO SAID IT：按 speaking turn 归因，不按句意。这条规则单独就切掉了一大半噪音（含整段调研发现，因为它们都在 assistant turn 里）。
+
+**⑤ 原子 vs 富上下文。**
+「一条一个事实、最短」让事实可去重、不啰嗦；但太短会丢掉让它可复用的 scope（`Browserbase works fully with Semrush` 脱离当时对话没法用）。两段式 enrich 化解：先选原子 `core`，再补有界 scope 成 `text`；去重锚 `core`，所以补 context 不破坏去重。
+
+**⑥ 去重：确定性 vs 语义。**
+确定性层只做 exact-on-core（窄但绝对可靠）；语义近重交给 LLM（judge 看 top-12 + compaction 全库扫），**不做确定性语义去重**。这是有意的——语义同一性是概率判断，硬塞进 regex 只会既漏又误。
+
+**⑦ 轻量模型当门卫，不当作家。**
+`gemini-2.5-flash-lite` 适合做保守判定（worth-saving、短改写、保守 compaction），不适合开放式总结 / 多事实融合 / 人格画像。社区经验明确：**换更强的大模型不会降 junk，只会让 junk 更通顺**（#4573）。所以还出脏先改规则，别先怪模型档位。
+
+**⑧ Qdrant-as-truth vs file-truth（已知次优，暂不切）。**
+明知 Claude Code 那种「文件 truth + 派生索引」更易审计、易纠错。当前不切，因为优先级是「先把写脏率降下来」，而不是「设计最优 memory 系统」；大重构会把问题从「memory 质量」转移成「新架构实现」。这是清醒的妥协，不是没看见。
+
+---
+
+## 7. 演进（the journey）
+
+| 阶段 | 时间 | 形态 | 为什么离开上一阶段 |
 |---|---|---|---|
-| 内容 | 世界/主题知识、ingest 的外部来源、wiki 结论 | 关于**用户**和**怎么干活**：偏好、被纠正的规则、在做的项目、外部资源指针 | 静态、长期、人工维护的 agent 行为准则 |
-| 读写节奏 | 显式 ingest / query，读多写少 | 对话中自动累积、会修正、会过期 | 几乎不变，只在用户要改持久行为时动 |
-| 谁维护 | llm-wiki skill | memory 协议（模型自动 + 用户显式） | 仅用户明确要求时（CLAUDE.md 已有此约束） |
-| 判定 | 「这是关于某主题的知识吗」→ wiki | 「这是关于用户/协作方式的事实吗」→ memory | 「这是要永久改变 agent 行为的规则吗」→ AGENTS.md |
+| **P0 文件式 MVP** | 06-05/06 | clone Claude Code：每条事实一个 markdown + `MEMORY.md` 索引 eager 注入 + 模型驱动写 + idle 后台抽取 | 召回 O(n) 膨胀、存储是 flat file 无语义排序 |
+| **P1 接入 mem0/Qdrant** | 06-15/16 | 语义向量召回；召回翻成 pull-based `search_memories`，杀掉全量注入 | 解决 O(n)；但抽取仍是 mem0 `infer:true` 高召回 |
+| **P2 mem0 抽取 + gate(append)** | 06-19/21 | gate 文件作 `customInstructions` 追加压 recall + 写后正则清理 | append 压不动弥散在整 prompt 里的高 recall（#4573）；正则清理误杀又难维护 |
+| **P3 Plan A：own 抽取** | 06-21/22 | 自己的 judge（temp0）出决策，`infer:false` 落库，mem0 退成 storage | 自家 pipeline 仍 over-recall：角色归因泄漏、研究灌库、开环当事实、改写重复、缺上下文 |
+| **P4 gate + 两段式 enrich** | 06-24 | WHO SAID IT / TRUTH-not-open-loop / RESEARCH→wiki / SELF-CONTAINED + `core`/`text` 去重锚 core | 当前 |
 
-边界规则：
-- 一条 feedback 反复出现、稳定成准则 → 可从 memory「升级」进 AGENTS.md（人工确认）。
-- memory 不碰 `notes/user.md`（CLAUDE.md 已规定：除非用户明确要求才改 user.md）。memory 是 agent 自己的笔记层，user.md 是用户权威档案。
-
----
-
-## 4. 要落地的改动清单（file-by-file）
-
-MVP（最小可用，决策已锁定见 §7）：
-
-1. **`notes/memory/MEMORY.md`** — 新建索引（带表头注释说明每行格式）。
-2. **`.opencode/memory/PROTOCOL.md`**（main repo） — 写入协议 + 「什么值得记/什么是噪音」判定标准（移植 Claude Code 协议文本，按本 repo 调整：数据路径 `notes/memory/`、四种 type、frontmatter、查重更新、索引维护、`[[name]]` 互链、不碰 `notes/user.md`）。单独成文以保持 AGENTS.md 精简；协议作为 feature spec 留在 main repo（见 §10.1）。
-3. **种子记忆** — 预置已知事实（`user-email.md`），即时验证 `instructions` 注入 + 召回，同时让目录入 git。（注：早期另有 `reference-notes-layout.md`，因与 `notes/CLAUDE.md` 重复、有 drift 风险，已于 2026-06-06 删除。）
-4. **`.opencode/opencode.json`** — `instructions` 设 `[".opencode/memory/PROTOCOL.md", "notes/memory/MEMORY.md"]`。
-5. **`AGENTS.md`** — 仅加一行短指针（"长期记忆见 `notes/memory/`，写入规则见 PROTOCOL.md"），协议正文不进 AGENTS.md。
-6. **`.opencode/plugin/memory.ts`** — 捕获 plugin（真 auto 的核心，见 §3.4）：
-   - `event` hook：监听 `session.idle`，防抖后跑后台抽取（增量读新消息 → headless 便宜模型抽取 → 落盘合并 → 推进水位线）。
-   - `event` hook：监听 `session.deleted`，在会话销毁前 best-effort flush 一次抽取，减少防抖窗口里的漏记。
-   - `chat.message` hook：正则拦截记忆关键词 → 注入强制存储指令（即时补充）。
-   - maintenance：定时 + churn 双触发 compaction；每次维护都重建 `MEMORY.md`，并在需要时合并重复项、prune 已过期/被完全覆盖的记忆、把 unresolved contradictions 写进 `_CONFLICTS.md`。
-   - 列进 `.opencode/opencode.json` 的 `plugin` 数组（与现有 `./plugin/scheduler.ts` 并列）。
-7. **`.data/memory-extract-watermark.json`** — 每 session 的抽取水位线（gitignore，运行时产物）。
-8. **`.data/memory-compact-state.json`** — compaction 的 churn / last-attempt / last-compacted 状态（gitignore，运行时产物）。
-9. **`notes/memory/_CONFLICTS.md`** — unresolved contradiction 列表；存在时索引会显示提醒。
-
-Phase-2（不在 MVP，验证后再评估）：
-
-- **自定义 `memory_save`/`memory_search` 工具** — 把写入格式和索引更新固化进代码（减少模型手写 frontmatter 出错）。
-- **`experimental.chat.system.transform` hook** — 记忆变多时按当前对话动态注入 top-N 相关记忆正文，而不只注入索引（语义召回升级）。
-- **importance 评分 / recency 衰减 / 自动遗忘**。
+P4 落地时做了一次性清库：74 → 14 条（噪音含一批从「设计这套记忆系统」的对话里被抓出来的 meta、以及一条与中文默认冲突的 `English-only responses` 错误事实）。
 
 ---
 
-## 5. MVP 数据流（端到端）
+## 8. 同类实现对照（定位）
 
-```
-会话启动
-  └─ OpenCode 读 instructions → MEMORY.md 索引 + PROTOCOL 进 context
-
-对话进行中
-  ├─ 召回：模型见索引行相关 → read 展开 notes/memory/xxx.md 正文
-  └─ 即时捕获（机制 4）：用户说「记住」→ chat.message 正则命中
-           → 注入强制指令 → 模型当场 write + 更新索引
-
-对话停下 ~60s（机制 3，真 auto 主力）
-  └─ session.idle 防抖烧到 → 后台抽取器
-           → 读水位线之后的新消息（增量）
-           → headless 便宜模型按 PROTOCOL 抽取，喂索引去重
-           → 落盘新增/更新 notes/memory/*.md + 更新索引
-           → 推进水位线
-
-会话结束
-  └─ notes git 自动同步（已有 push 自动化）→ 记忆持久化、跨机可用
-```
-
----
-
-## 6. 暂不做（明确划出 MVP 边界）
-
-- **语义/向量召回**：sqlite-vec / embedding。MVP 召回靠索引注入 + 按需展开；等记忆条数大到索引召回不准时再加，届时可复用 `experimental.chat.system.transform` 注入相关正文。
-- **importance 评分 / recency 衰减 / 自动遗忘**：MVP 靠抽取器「查重更新」+ 人工维护。规模化后再引入打分与过期策略。
-- **多用户 scope**：单用户，不需要。
-- **Gmail bridge 复用**：同一套 `notes/memory/` 文件未来可被 bridge 读取，但本期不接线。
-
-> 注：后台异步抽取（`session.idle`）原本列在此处的 phase-2，2026-06-06 因「真 auto」目标**提到了 MVP**（见 §3.4 / §4.6）。
-
----
-
-## 7. 决策（锁定于 2026-06-05，触发策略于 2026-06-06 修订）
-
-1. **召回**：OpenCode 原生 `config.instructions` 注入 `MEMORY.md` 索引 + `PROTOCOL.md`（省 token），记忆正文按需 read 展开——不一次性塞全部正文。零代码、不依赖 experimental hook。
-2. **协议位置**：单独成文 `.opencode/memory/PROTOCOL.md`（main repo——协议是 feature spec，归 main；见 §10.1），由 `instructions` 一并加载，AGENTS.md 只留短指针。
-3. **种子记忆**：MVP **预置几条**已知事实，即时验证注入 + 召回链路。
-4. **捕获触发（修订）**：目标是**真 auto write**。采用 **机制 3（debounced `session.idle` 后台抽取）为主力 + 机制 4（关键词提前触发同一 extractor）为即时补充**，砍掉机制 2（模型对话内自觉，不可靠且被 3 取代）。后台抽取从原 phase-2 提到 MVP。实现细节见 §3.4。
-5. **后台抽取调模型**：复用 OpenCode 已配置 provider，经 `ctx.client` 开 headless 临时 session 跑便宜模型，不引入额外 API key；增量水位线控成本，喂索引做去重。
-
----
-
-## 8. 风险
-
-- `experimental.chat.*` 是 experimental，API 可能变。但 MVP 召回走的是稳定的 `config.instructions`，**不依赖任何 experimental hook**；捕获用的 `event` / `chat.message` 也是稳定 hook（scheduler 已在用同类）。风险可控。
-- **后台抽取记噪音**：真 auto 的代价是模型会把无关闲聊也记下来。缓解：PROTOCOL 里「什么值得记/什么是噪音」标准要写严；抽取器喂索引去重；MVP 期人工抽查 `notes/memory/` diff。这是我们比 supermemory/Codex 走得更远（它们不做后台抽取）所换来的主要风险。
-- **抽取延迟/丢失**：防抖期间进程退出 → 该轮未抽取。缓解：也在 `session.deleted` / 退出时 flush 一次；水位线保证下次 resume 能补抽。
-- 记忆与 AGENTS.md/wiki 内容漂移/重复 → §3.5 边界规则 + 定期人工 review。
-- **索引膨胀**：MEMORY.md 随记忆增长而变大、每会话都注入 → 借鉴 Codex 的 `project_doc_max_bytes`，给注入设字节上限 + 超限截断/告警（见 §9）。
-
----
-
-## 9. 参考实现对照与借鉴（supermemory / Codex）
-
-调研了两个真实实现，确认我们的方向并吸收了几点：
-
-### 9.1 `opencode-supermemory`（OpenCode plugin，云端 SaaS）
-- 架构与我们同构（plugin + context 注入 + 工具），但记忆存 **Supermemory 云端**，故**必须登录/API key**，数据上云、依赖其服务。
-- 召回：首条消息时**语义检索** top-N 相关记忆注入（带相似度 %），比我们的「整索引注入」更省 token、更准——这是我们 phase-2 语义召回的目标形态。
-- 捕获：**只有关键词触发**（`chat.message` 正则命中 → 注入 `[MEMORY TRIGGER DETECTED]` 强制指令让模型调 `add`）。**没有后台抽取**，「不喊就不记」。
-- **借鉴**：关键词强制存的做法 → 已吸收为我们的机制 4（§3.4 即时补充）。
-
-### 9.2 Codex CLI（`codex-rs`，OpenAI）
-- 真·记忆机制：**AGENTS.md 分层指令**（root→cwd 沿途所有 AGENTS.md 拼接，不越过 project root；全局 `~/.codex/AGENTS.md`；本地覆盖 `AGENTS.override.md` 优先级更高）+ **会话持久化**（rollout / SQLite state-db / `codex resume`）+ **goals**（线程目标）+ **compaction**。
-- **关键：Codex 没有自动对话记忆抽取**。durable memory = 人工维护的 AGENTS.md + 会话 resume 重放。比 supermemory 更保守。
-- **借鉴**：
-  1. **字节预算**：Codex 用 `project_doc_max_bytes` 给注入的指令设硬上限，超限**截断 + 告警**。→ 我们给 MEMORY.md 索引注入加同款上限，防止索引膨胀吃 context（已记入 §8）。
-  2. **本地覆盖层**：`AGENTS.override.md`（gitignored、优先级高）的模式 → 可选地支持一个**本地不同步的记忆层**（机器特定、不进 notes git）。phase-2 备选，MVP 不做。
-  3. **层次清晰分离**：Codex 把「curated 指令 / 会话历史 / goals」干净分层 → 印证我们 §3.5 的 memory / wiki / AGENTS.md 边界。
-
-### 9.3 我们的定位
 | | 召回 | 捕获 | 存储 | 登录 |
 |---|---|---|---|---|
-| supermemory | 语义检索 | 关键词触发 | 云端 | 需要 |
-| Codex | AGENTS.md 拼接 + resume | **无自动抽取**（人工 curate） | 本地文件 + SQLite | 否 |
-| **本设计** | 索引注入 + 按需展开 | **机制 3 后台抽取（真 auto）+ 机制 4 关键词** | 本地 `notes/` git | 否 |
+| supermemory | 语义检索（首条消息注入 top-N） | 仅关键词触发，**无后台抽取**（不喊就不记） | 云端 SaaS | 需要 |
+| Codex CLI | AGENTS.md 分层拼接 + 会话 resume | **无自动抽取**（人工 curate AGENTS.md） | 本地文件 + SQLite | 否 |
+| Claude Code | 索引常驻 + 按需展开 | 模型按协议顺手写 markdown | 本地文件 | 否 |
+| **本设计** | pull-based 语义检索 | **后台抽取（真 auto）+ 关键词提前触发**，过 gate | 本地 mem0/Qdrant | 否（仅 Gemini key） |
 
-→ 我们在「召回」上比 Codex 强、比 supermemory 简单；在「捕获」上比两者都更自动（真 auto），代价是噪音风险（§8）。存储/隐私上与 Codex 一致（本地、无登录），优于 supermemory。
+吸收的点：supermemory 的关键词强制触发 → 我们的 explicit 机制；Codex 的注入字节预算思想、清晰分层（curated 指令 / 会话历史 / 知识）→ 印证 memory / wiki / AGENTS.md 的边界。我们的差异化：捕获比两者都更自动（真 auto），代价是噪音风险，故全部精力花在 gate 上。
 
----
-
-## 10. 落地后的决策与已知缺口（2026-06-06）
-
-实现后补记几条决策，纠正前文与现状的偏差，并把已知缺口列成 backlog（现在不动，later 一起修）。
-
-### 10.1 PROTOCOL.md 位置更正（覆盖 §3.3 / §4 / §7）
-
-前文写 `instructions` 同时加载 `notes/memory/PROTOCOL.md`，**已过时**。最终落点：
-
-| 角色 | 文件 | 所属 repo | 原因 |
-|---|---|---|---|
-| 记忆**数据**（索引 + 每条 fact） | `notes/memory/MEMORY.md` + `notes/memory/*.md` | **notes** | 数据要持久化/同步/跨机 |
-| 记忆**协议/spec** | `.opencode/memory/PROTOCOL.md` | **main** | 行为/规范是代码，随 feature 版本化 |
-| 记忆**捕获代码** | `.opencode/plugin/memory.ts` | **main** | 同上 |
-
-现状 `.opencode/opencode.json`：
-```json
-"instructions": [".opencode/memory/PROTOCOL.md", "notes/memory/MEMORY.md"]
-```
-即「数据归 notes / feature 归 main」的拆分（见 `feedback_notes_vs_mainrepo_split`）。
-
-### 10.2 召回为何保持 eager 全索引（不改 agent-grep）
-
-被问到「索引也别进 context，让 agent 按需 grep」。**否决**，理由是 **blind-spot 问题**：
-
-> agent 必须先意识到「这里可能有相关记忆」才会去搜；但它意识不到——因为那条记忆不在视野里。
-
-这会把 recall 劣化为只对**显式召回**（"我邮箱是啥"）有效，而对**隐式召回**（主动套用已记的偏好/规则，不需用户重提）几乎失效——而隐式召回正是 memory 最值钱的部分。这也是 Claude Code / OpenCode 都选 eager load 的原因：eager 才保证「知识在场」。
-
-关键认知：**我们已是最优拆分**——索引层 eager（廉价、保召回），正文层 lazy（按需 read）。把索引层也 lazy 是「省最便宜的、赔最贵的」。
-
-### 10.3 增长路径：hook 自动注入，不是 agent grep
-
-索引随条数**线性增长**，但增长的是廉价索引层（每条一行 ~15–25 tokens，几百条才几 k）。短中期无感，但**单调增长、无自动回收**。真到肉疼时：
-
-| 方案 | 固定成本 | 隐式召回 | 取舍 |
-|---|---|---|---|
-| A. 现状 eager 全索引 | 线性（廉价） | ✅ | 采用 |
-| B. agent 按需 grep | ~0 | ❌ 易漏 | **否决**（blind-spot） |
-| C. hook 自动注入命中项 | ~0 固定 + 命中项 | ✅ 自动 | **增长后的升级方向** |
-
-C：在 `memory.ts` 已有的 `chat.message` hook 里，对每条用户消息自动 grep memory，只注入命中条目。recall 仍自动，agent 不需「想起来去搜」。代价是匹配质量（关键词 vs 语义）。**等到了阈值再做。**
-
-### 10.4 Maintenance 状态与剩余缺口
-
-现状已不是“只抽取、不打扫”：
-
-- **Layer A（确定性）**：每次抽取/compaction 后都从 frontmatter 重建 `MEMORY.md`，索引不再是手工可漂移状态。
-- **Layer B（LLM compaction）**：现在同时有 **churn 触发**（写入累计到阈值后尽快整理）和 **periodic 触发**（按 wall-clock 间隔至少扫一遍）。compaction 可 merge duplicates、prune 明确过期/被完全覆盖的项，并把 unresolved contradictions 落到 `notes/memory/_CONFLICTS.md`，同时在 `MEMORY.md` 加提醒。
-- **state**：运行时把 `churn`、`lastAttemptedAt`、`lastCompactedAt` 落到 `.data/memory-compact-state.json`，避免每个 idle 都重复打一遍 compaction。
-
-剩余缺口：
-
-1. **单次全量 compaction 有 size ceiling**：当前实现把全库一次性喂给小模型；超 `MAX_COMPACT_CHARS` 会跳过并等待下一个周期。后续需要做 clustering / batched compaction，而不是单 pass。
-2. **解 main↔notes 路径耦合**：`opencode.json` 的 `instructions` 硬编码了 `notes/memory/MEMORY.md`（main repo committed 文件伸进 notes repo 内部布局），且该路径与 plugin 里的 `MEMORY_SUBDIR = "notes/memory"` **重复**。干净解法：把 recall 注入从 opencode.json 挪进 plugin（启动时读 `MEMORY.md` 经 system-prompt hook 注入），从 `instructions` 删掉该 notes 路径，路径来源走 env/const。效果：notes 路径从两处收敛到一处且可配置。代价：recall 从「零代码原生 instructions」变成「plugin 注入」。
-3. **EXTRACT_SYSTEM / COMPACT_SYSTEM 与 PROTOCOL.md 去重**：`memory.ts` 里的 prompt 与 `PROTOCOL.md` 内容重叠（分类、高门槛、去重/保守规则），有 drift 风险。改为运行时读 `PROTOCOL.md` 作单一来源。
+> 上游 OSS 角度（同一条线沉淀出的贡献）：mem0 PR **#5643**（role-attribution，已 merge）、issue **#5730**（v3 additive prompt over-recall，OSS 无法调低）、审计 issue **#4573**（97.8% junk，维护者承认 extraction permissiveness 是 ongoing 问题）、**#4805**（删掉全量 override 的那个 commit）。
 
 ---
 
-## 11. 抽取边界与两段式 enrich（2026-06-24）
+## 9. 边界（与 wiki / user.md / AGENTS.md）
 
-> 背景：§1–§9 描述的是最初的**文件式 MVP**（`notes/memory/*.md` 落盘）。系统后续 pivot 到 **Plan A：mem0/Qdrant 只当存储，抽取由我们自己 own**——`mem.add(infer:true)` 的高 recall 抽取被换成一次受 gate 约束的 Gemini judge 调用（`temperature:0`，确定性），ADD/UPDATE 决策再以 `infer:false` 落库，junk 不进 Qdrant。完整背景见 `notes/my-files/mem0-extraction-recall-override.md`。本节记录在该架构上对**判定边界**和**去重/上下文**的两组改动。
->
-> 相关文件：`.opencode/memory/EXTRACTION_GATE.md`（gate，作为 judge 的 system prompt 注入）、`.opencode/lib/mem0-judge.ts`（judge + output contract）、`.opencode/lib/mem0-extract.ts`（写路径 + 去重）。
+| | `notes/knowledge/`（llm-wiki） | 本记忆层 | `notes/user.md` | `AGENTS.md` |
+|---|---|---|---|---|
+| 内容 | 世界/主题知识、ingest 的外部来源 | 关于**用户**和**怎么协作**的耐久事实 | Mentor 综合出的用户画像（人类可读） | 静态、长期的 agent 行为准则 |
+| 维护 | llm-wiki skill（显式） | 抽取自动 + 用户显式「记住」 | Mentor 维护，记忆层**不碰** | 仅用户明确要求时 |
+| 判定 | 「关于某主题的知识吗」 | 「关于用户/协作的事实吗」 | 用户的权威档案 | 「要永久改 agent 行为吗」 |
 
-### 11.1 问题：over-recall 在自家 pipeline 复现
+一条 feedback 反复出现、稳定成准则 → 可人工「升级」进 AGENTS.md。
 
-审计本地 Qdrant 发现约一半是噪音，且和 mem0 上游 over-recall（issue #5730）同型：
+---
 
-1. **角色归因失效**：我（assistant）在整理 todo / 做调研时写的「User wants to track X」「User is interested in Y」被 judge 当成用户事实抽走——和已 merge 的 mem0 PR #5643 同一类 bug（抽取前角色信息丢失，assistant 的话被洗成 user fact）。
-2. **research 灌库**：每做一次竞品/SEO/市场调研，passive capture 就把整段发现（关于外部世界，不是关于用户）当 durable fact 存进来。
-3. **open-loop 当事实**：「想 track 某个 PR / 链接 / 数字 / 余额」这种待办意图被当成稳定事实。
-4. **改写重复**：去重只在「整句精确匹配」上做，措辞一变就漏（同一事实存了 3 份）。
-5. **缺上下文**：form rule 死守「最短」，把让事实可复用的 scope 也削没了（`Browserbase works fully with Semrush` 脱离当时对话不可用）。
+## 10. 已知缺口 / 不要再争的点
 
-### 11.2 Gate 改动（边界）
+**已知缺口：**
+1. judge 的 UPDATE 分支只更新 `text`，不刷新该条的 `core` metadata（边缘，影响小）。
+2. compaction 是 whole-store 单 pass，成本线性；超 `COMPACT_MAX_CHARS` 跳过。规模大了要做 clustering / batched，不是单 pass。
+3. 存量 legacy 条目无 `core` 字段，按 `text` 回退去重；新规则只管往后。
+4. 关 TUI 太快会漏当次抽取（§2.1），靠 watermark 下次补。
+5. `opencode.json` 的路径与插件常量有 main↔notes 耦合（早期 `instructions` 硬编码 notes 路径的遗留，现已收敛到 PROTOCOL+pull，但路径来源仍可再集中）。
 
-在 `EXTRACTION_GATE.md` 加四条，按「谁说的 / 是不是事实 / 属不属于 user memory / 形式」分别卡：
+**不要再争（已验证的决定）：**
+1. 不要把 `runId` 带回来——session 级 id 当 runId 会让 dedup 只在单 session 内生效，跨 session 重复积累。固定 `userId` 作全局池、`sessionId` 只进 metadata。
+2. 不要把 recalled memory 重新喂回 extraction（feedback loop，会把每条无限复制）。
+3. 不要指望「更强的大模型」自动解决脏写——社区经验正相反（#4573）。
+4. 不要把 compaction 当总结器用；`merge` 永远是 no-op。
+5. 不要为复用主会话 OpenAI OAuth 去折腾背景 prompt——没有干净 sidecar 路径，九成会沦为 agent 自身配置折腾。
 
-- **WHO SAID IT（按 speaking turn 归因，不按句意）**：关于用户的 claim（偏好/想要/兴趣/决定）必须有 **user turn** 证据；assistant 转写的「User wants X」DROP。**例外**：客观操作 `reference`（命令/host/依赖/how-to，assistant debug 时发现的）无论谁说都 KEEP——它是关于系统的客观事实，不是关于用户的主张。这条同时切掉 §11.1 的 (1) 和大部分 (2)。
-- **TRUTH, NOT OPEN LOOPS（与谁说无关，含用户自己）**：「想做/track/monitor/follow up/build X」是开环任务，归 todos.md，DROP——**即使用户自己说**。durable memory 是任务关掉后仍为真的东西。standing 工作风格偏好（「总是用英文回」）仍留。
-- **RESEARCH → wiki**：外部产品/市场/SERP/题材的研究发现归 llm-wiki，不进 user memory；只有用户基于研究做的**决定**（user turn，durable）可过。
-- **SELF-CONTAINED（form rule）**：存的 fact 要能脱离对话独立读懂，只加「主语 + 适用条件」，禁止 rationale/history/why。
+**后续迭代优先级：** 先观察新 gate 下是否还出 `User instructed...` / `The deliverable was...` 这类垃圾 → 还有就继续加确定性 filter，不先换架构 → 规则已经很重还不稳，再考虑「LLM 只做 worth-saving / span picking，最终存原文」→ 真要重构，才上 file-truth + vector-index。
 
-### 11.3 两段式 enrich + 去重锚到 core
+---
 
-判定（要不要存，精度敏感）与自包含（补 scope，召回敏感）拆成两层，互不污染：
+## 11. 相关文件
 
-- judge 每条决策返回 `{core, text}`（`mem0-judge.ts` 的 `Decision` + OUTPUT CONTRACT）：
-  - `text` = 自包含富版，**实际存储/展示**（主语 + scope）。
-  - `core` = 原子裸版，**只做去重 key**。
-- 写路径（`mem0-extract.ts`）：`factKey = hash(core)`，`core` 一并存进 metadata，fallback scan 也比 `core`（`payloadDedupKey`）。于是同一事实的不同 enriched 措辞会在确定性去重层撞重，不再各存一份——治 §11.1 (4)。
-- 注意这只拓宽了**确定性（exact-on-core）**去重；语义近重仍只由 LLM 兜（judge 写时看 top-`DEDUP_SEARCH_LIMIT` 条 + compaction 周期全库扫）。没有确定性的语义去重，是有意为之。
+- `.opencode/plugin/mem0-memory.ts` — 触发调度、`search_memories` 工具、snapshot、compaction、assistant-prune。
+- `.opencode/lib/mem0-extract.ts` — watermark、fresh-message slicing、写路径（去重 + `mem.add(infer:false)`）、结构守卫。
+- `.opencode/lib/mem0-judge.ts` — judge（Gemini temp0）、OUTPUT CONTRACT、`{core,text}` 决策。
+- `.opencode/lib/mem0-client.ts` — mem0 实例（Qdrant + Gemini 配置）。
+- `.opencode/lib/mem0-claude-hook.ts` / `mem0-claude-mcp.ts` — Claude Code runtime 的写 hook / 读 MCP（共享同一 store）。
+- `.opencode/memory/EXTRACTION_GATE.md` — 低召回 gate（judge 的 system prompt），最重要的规则文件。
+- `.opencode/memory/PROTOCOL.md` — 给模型看的召回/写入协议（常驻 context）。
 
-### 11.4 验证与缺口
+## 最后一句
 
-- judge probe（`temperature:0` 确定性重放）确认：assistant 转写的 user-wants、research 发现、SEO 簇分析、用户自述的 open-loop 均 DROP；真用户偏好、assistant 发现的操作 reference 均 KEEP，且 context-poor 的 reference 被自动补 scope。
-- 一次性清库：74 → 14（噪音含一批从「设计本记忆系统」对话里抓出来的 meta，及一条与中文默认冲突的 `English-only responses` 错误事实）。
-- 已知缺口：(a) judge 的 UPDATE 分支只更新 `text`，不刷新该条的 `core` metadata（边缘，影响小）；(b) compaction 的 `merge` 仍是 no-op（`mem0-memory.ts`），近重靠 `delete`/`rewrite` 清；(c) 存量 legacy 条目无 `core` 字段，按 `text` 回退去重，新规则只管往后。
+这套系统的本质没变：它仍是 `LLM-extracted memory`。所有工作都是把它往「少写、短写、别自作聪明」上拧。只要还没换 truth layer，就别对它抱「绝对可信」的幻想——gate、prune、compaction 三层都是为了在这个前提下把它压到可用。

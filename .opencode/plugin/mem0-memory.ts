@@ -9,19 +9,19 @@ import { detectKeyword, runExtraction, type NormMsg } from "../lib/mem0-extract"
 
 /**
  * mem0-backed long-term memory plugin (replaces memory.ts). See
- * docs/mem0-integration-plan.md for the full design.
+ * docs/memory-feature-design.md for the full design.
  *
  * Recall is PULL-BASED: the model calls the `search_memories` tool when prior
  * user context would help. Nothing is auto-injected into the context, so the
  * store can grow without inflating every session (the old MEMORY.md-in-
  * `instructions` approach grew O(n)).
  *
- * Writes:
+ * Writes (Plan A — we OWN extraction; mem0's infer:true is never called):
  *   - Auto (Mechanism 3): `session.idle` debounced — the new messages since the
- *     last watermark are handed to mem0's own `infer:true` extractor, which
- *     decides what (if anything) is durable and dedups/updates against the store.
- *   - Explicit (Mechanism 4): a "记住 / remember" keyword in the user's message
- *     routes that message straight to mem0 immediately.
+ *     last watermark are handed to OUR gated judge (mem0-judge.ts), which decides
+ *     what (if anything) is durable; its decisions are applied with infer:false.
+ *   - Explicit (Mechanism 4): a "记住 / remember" keyword fires the SAME extractor
+ *     early (short debounce), tagged source:"explicit".
  *   - `session.deleted` flushes any pending extraction for that session.
  *
  * Audit: a one-way `notes/memory/SNAPSHOT.<agent>.md` is regenerated from

@@ -2,9 +2,9 @@
 /**
  * Claude Code Stop-hook counterpart of the OpenCode plugin's idle extraction
  * (.opencode/plugin/mem0-memory.ts → extract()). Fires when Claude finishes a
- * turn; feeds the new transcript since a per-session watermark to mem0's own
- * `infer:true` extractor, which decides what (if anything) is durable and
- * dedups/updates against the SHARED store (same user_id as the OpenCode runtime).
+ * turn; feeds the new transcript since a per-session watermark to OUR gated judge
+ * (Plan A; mem0-judge.ts), whose ADD/UPDATE decisions are applied with infer:false
+ * against the SHARED store (same user_id as the OpenCode runtime).
  *
  * The extraction behavior itself (watermark, slicing, gate, mem.add) lives in
  * the shared `mem0-extract.ts`; this file only NORMALIZES Claude's transcript
