@@ -60,6 +60,12 @@ Before attempting a site, check if it belongs to a known family — saves the en
 - thezenweb differs: CKEditor, `/new` route, KeyCAPTCHA drag-puzzle
 - Full CDP automation pattern: `web-access` site-patterns → `web2-blog-family.md`
 
+**Blogger-hosted sites** (any site powered by Blogger/blogspot):
+- Comment frame (`blogger.com/comment/frame/...`) requires Closure-framework isTrusted clicks — CDP synthetic events are blocked
+- Publish also fails from standalone frame URL due to missing blog referrer and CDP-driven reCAPTCHA penalty
+- Comment author links are nofollow — low SEO value regardless
+- Mark `no` immediately; do not attempt even with user present
+
 **AI tool directories** (topai.tools, saashub.com, aidirectori.es, aitoolhunt.com):
 - Most charge $47–$229 for listing; mark `no` immediately on payment wall
 - Auto-generated profile pages are not real placements — skip
