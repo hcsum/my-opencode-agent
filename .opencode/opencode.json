@@ -2,6 +2,15 @@
   "$schema": "https://opencode.ai/config.json",
   "share": "manual",
   "snapshot": false,
+  "provider": {
+    "openai": {
+      "models": {
+        "gpt-5.4": {
+          "options": { "reasoningEffort": "medium" }
+        }
+      }
+    }
+  },
   "instructions": ["notes/user.md", ".opencode/memory/PROTOCOL.md"],
   "plugin": ["./plugin/scheduler.ts", "./plugin/mem0-memory.ts"]
 }
