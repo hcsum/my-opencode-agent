@@ -40,8 +40,11 @@ Build real backlink placements from an existing target list. This skill owns exe
 ## Inaccessible Targets
 
 - If the site is inaccessible, the submission path is dead, or the flow is clearly broken, mark it in the tracking CSV immediately and move on to the next target.
-- Prefer `no` when the target is clearly dead or not actionable.
-- Prefer `parked` when the target might still work later but is currently blocked on a temporary or manual-only step.
+- Use **four statuses** — pick the tightest fit:
+  - `done` — live placement confirmed
+  - `parked` — blocked on a temporary/manual step (email verify, user completes form, awaiting moderation result); will unblock
+  - `hard` — submission path exists but requires user interaction to complete (captcha hand-off, hidden form needs click trigger, Blogger popup, reCAPTCHA v2); doable next run with user present
+  - `no` — permanently not actionable: dead site, login-only, paid wall, auto-generated page, web2.0 blog cluster, truly no submission surface
 - Always record the reason in `note` so the next run does not rediscover the same blocker from scratch.
 
 ## Known Platform Families
@@ -71,6 +74,6 @@ Before attempting a site, check if it belongs to a known family — saves the en
 
 ## Output
 
-- Report each target as `done`, `parked`, or `no`.
+- Report each target as `done`, `parked`, `hard`, or `no`.
 - Include the live placement URL when available.
 - Include any user hand-off step that is still blocking progress.
