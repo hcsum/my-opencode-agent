@@ -24,6 +24,7 @@ Build real backlink placements from an existing target list. This skill owns exe
 - Prefer the smallest viable placement that gets the link live: profile, listing, comment, simple post, then heavier article workflows only when needed.
 - Treat "how do links come out of this site?" as a required preflight question, not an optional curiosity.
 - Every article or post must use genuinely unique content. Do not reuse the same copy across Web2.0 or blog platforms.
+- For blog posts and comments, a plain-text URL does not count as a backlink. The placement must render as a real clickable link such as an actual `<a href>` in the visible body before you can count it.
 - If one account or site property can legitimately host placements for multiple user projects, reuse it instead of forcing separate accounts. In shared-account cases, prefer a generic username, display name, and blog/profile identity rather than one tied to a single project domain.
 - Fill the straightforward fields yourself: username, title, URL, short description, obvious category, logo upload, simple bio, and other low-ambiguity inputs.
 - For complex submission forms, do the straightforward prep yourself and leave difficult, ambiguous, or high-friction fields for the user to complete.
@@ -41,7 +42,7 @@ Build real backlink placements from an existing target list. This skill owns exe
 
 - If the site is inaccessible, the submission path is dead, or the flow is clearly broken, mark it in the tracking CSV immediately and move on to the next target.
 - Use **four statuses** — pick the tightest fit:
-  - `done` — live placement confirmed
+  - `done` — live placement confirmed, with the target URL present as a real clickable link rather than plain text
   - `parked` — blocked on a temporary/manual step (email verify, user completes form, awaiting moderation result); will unblock
   - `hard` — submission path exists but requires user interaction to complete (captcha hand-off, hidden form needs click trigger, Blogger popup, reCAPTCHA v2); doable next run with user present
   - `no` — permanently not actionable: dead site, login-only, paid wall, auto-generated page, web2.0 blog cluster, truly no submission surface
@@ -51,25 +52,13 @@ Build real backlink placements from an existing target list. This skill owns exe
 
 Before attempting a site, check if it belongs to a known family — saves the entire "how do links come out of this site?" preflight.
 
-**Web2.0 free blog family** (blogrelation, madmouseblog, luwebs, iyublog, thezenweb, blogsmine, activoblog, bloggadores, azzablog, aboutyoublog):
-- Registration: Blog Name + Email + Password + SecureImg reCAPTCHA (hand CAPTCHA to user)
-- Auto-login after signup, no email confirmation needed
-- New post at `https://<platform>.com/new-post`; TinyMCE injection via `tinymce.get("content").setContent(html)`; publish via `#publish` click
-- All article-body links are dofollow (verified)
-- One shared account hosts all projects on the platform (2 posts per platform)
-- thezenweb differs: CKEditor, `/new` route, KeyCAPTCHA drag-puzzle
-- Full CDP automation pattern: `web-access` site-patterns → `web2-blog-family.md`
+**Web2.0 free blog family**:
+- These platforms often share similar registration, editor, and publish flows, so reuse already-validated patterns when the site clearly belongs to a known family.
+- Confirm the final article-body link is actually rendered and clickable before counting it.
 
-**Blogger-hosted sites** (any site powered by Blogger/blogspot):
-- Comment frame (`blogger.com/comment/frame/...`) requires Closure-framework isTrusted clicks — CDP synthetic events are blocked
-- Publish also fails from standalone frame URL due to missing blog referrer and CDP-driven reCAPTCHA penalty
-- Comment author links are nofollow — low SEO value regardless
-- Mark `no` immediately; do not attempt even with user present
-
-**AI tool directories** (topai.tools, saashub.com, aidirectori.es, aitoolhunt.com):
-- Most charge $47–$229 for listing; mark `no` immediately on payment wall
-- Auto-generated profile pages are not real placements — skip
-- substack.com is the notable exception: free, dofollow, AS=86 (medium effort — needs email verify + newsletter setup)
+**AI tool directories**:
+- Many directory sites gate submission behind payment, review queues, or shallow auto-generated pages.
+- Do not count an auto-generated page or locked payment step as a finished placement.
 
 ## CSV Discipline
 
