@@ -52,7 +52,9 @@ const DEBOUNCE_MS = Number(process.env.MEMORY_EXTRACT_DEBOUNCE_MS) || 60_000;
 // instead of a second independent add — single writer, no idle/explicit race.
 // Short, but long enough for the triggering message to persist before we read it.
 const KEYWORD_DEBOUNCE_MS = Number(process.env.MEMORY_KEYWORD_DEBOUNCE_MS) || 5_000;
-const EXTRACT_ENABLED = process.env.MEMORY_EXTRACT_ENABLED !== "0";
+// Auto-extraction is DISABLED by default (opt-in). The full extraction code
+// below is retained; set MEMORY_EXTRACT_ENABLED=1 to re-enable automatic writes.
+const EXTRACT_ENABLED = process.env.MEMORY_EXTRACT_ENABLED === "1";
 
 // Snapshot cadence: rewrite after this many adds, or once this long has passed.
 const SNAPSHOT_CHURN = Number(process.env.MEMORY_SNAPSHOT_CHURN) || 5;
@@ -323,6 +325,10 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
   // ---- auto extraction on idle (Mechanism 3) ----------------------------
 
   async function extract(sessionID: string) {
+    // Master gate: disabled by default (opt-in). Guarded HERE, not just in
+    // scheduleExtract, so every caller — idle/explicit timers, session.deleted,
+    // and the beforeExit flush — is covered.
+    if (!EXTRACT_ENABLED) return;
     if (running.has(sessionID)) return;
     running.add(sessionID);
     try {

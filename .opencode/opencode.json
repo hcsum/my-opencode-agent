@@ -11,6 +11,6 @@
       }
     }
   },
-  "instructions": ["notes/user.md", ".opencode/memory/PROTOCOL.md"],
+  "instructions": ["notes/user.md"],
   "plugin": ["./plugin/scheduler.ts", "./plugin/mem0-memory.ts"]
 }

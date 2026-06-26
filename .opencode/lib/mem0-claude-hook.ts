@@ -23,7 +23,9 @@ import { fileURLToPath } from "node:url";
 
 import { runExtraction, type NormMsg } from "./mem0-extract";
 
-const EXTRACT_ENABLED = process.env.MEMORY_EXTRACT_ENABLED !== "0";
+// Auto-extraction is DISABLED by default (opt-in). The extraction code is
+// retained; set MEMORY_EXTRACT_ENABLED=1 to re-enable automatic writes.
+const EXTRACT_ENABLED = process.env.MEMORY_EXTRACT_ENABLED === "1";
 // Worker mode (argv: --worker <payload-file>) does the actual mem0 add. The
 // foreground hook process detaches into this so Claude's turn-end never blocks
 // on the Gemini extraction call.
