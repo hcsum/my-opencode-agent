@@ -1,6 +1,13 @@
 # Pikachu Agent Memory — 设计与演进
 
-> 状态：已实现，仍在收紧规则。最后大改 2026-06-24。
+> 状态：**已停用（2026-06-26）**。整套实现保留在代码里，但默认全关、agent 不可见：
+> - 自动抽取（auto-write）默认关 → `MEMORY_EXTRACT_ENABLED=1` 才开（两 runtime 都在 `extract()` / hook `main()` 处 gate）。
+> - 召回工具 `search_memories` 默认不注册（opencode）→ `MEMORY_RECALL_ENABLED=1` 才暴露。
+> - agent-facing 文档已移除：`AGENTS.md` 的 Memory 段、`opencode.json` instructions 里的 `PROTOCOL.md`、`notes/` 的 `memory/` 审计文件夹都已删。
+>
+> 下文描述的是停用前的**完整设计**，作为重启时的参考；要恢复就翻上面两个 env flag。Claude Code 侧的 `.mcp.json` mem0 MCP 仍在（尚未摘）。
+>
+> 状态（历史）：已实现，仍在收紧规则。最后大改 2026-06-24。
 >
 > 这是 agent 自动记忆层的**单一设计文档**（合并了早期的 file-based 设计稿与 mem0 集成方案）。它记录：当前实现、为什么这么做、一路上的取舍与踩坑、已知缺口、不要再走的岔路。
 >

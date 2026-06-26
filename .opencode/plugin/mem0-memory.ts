@@ -55,6 +55,10 @@ const KEYWORD_DEBOUNCE_MS = Number(process.env.MEMORY_KEYWORD_DEBOUNCE_MS) || 5_
 // Auto-extraction is DISABLED by default (opt-in). The full extraction code
 // below is retained; set MEMORY_EXTRACT_ENABLED=1 to re-enable automatic writes.
 const EXTRACT_ENABLED = process.env.MEMORY_EXTRACT_ENABLED === "1";
+// Pull-based recall (`search_memories`) is also DISABLED by default so the tool
+// is not registered and the agent never sees it. The implementation is retained;
+// set MEMORY_RECALL_ENABLED=1 to expose the tool again.
+const RECALL_ENABLED = process.env.MEMORY_RECALL_ENABLED === "1";
 
 // Snapshot cadence: rewrite after this many adds, or once this long has passed.
 const SNAPSHOT_CHURN = Number(process.env.MEMORY_SNAPSHOT_CHURN) || 5;
@@ -441,7 +445,9 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
   }
 
   return {
-    tool: {
+    // Tool only registered when recall is opt-in; otherwise the agent never
+    // sees `search_memories` at all (the definition below is kept for re-enable).
+    tool: RECALL_ENABLED ? {
       search_memories: tool({
         description:
           "Search long-term memory about the user — their preferences, identity, ongoing projects, and how to work with them. Call this at the start of a task when prior user context would help; memory is NOT auto-loaded, so you only see it if you ask. Returns the most relevant remembered facts.",
@@ -468,7 +474,7 @@ export const Mem0MemoryPlugin: Plugin = async (ctx) => {
           }
         },
       }),
-    },
+    } : {},
 
     "chat.message": async (input, output) => {
       try {
