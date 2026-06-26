@@ -37,7 +37,9 @@ The yardstick — his durable, undated north-star `## goals`, one `- [theme] one
 ## Four actions
 
 **Add** — the user says to record a task ("add X", "note down X").
-- Append a bullet under `## active` (if they're doing it now) or `## backlog` (if it's later/maybe). Set `added` to today; infer priority and theme.
+- Before appending, scan the existing list for connection — don't just drop it at the bottom blind. Check whether the new task (a) duplicates or overlaps an existing item → fold it in as a sub-bullet / merge rather than create a dup; (b) is a sub-step of a fatter item (e.g. another piece of `declutter` or `everland`) → hang it under that item; (c) shares a theme or serves the same goal as an active front → place it beside its kin and reuse that theme. If it genuinely stands alone, append it fresh.
+- Append (or fold) a bullet under `## active` (if they're doing it now) or `## backlog` (if it's later/maybe). Set `added` to today; infer priority and theme.
+- Say in one line where you put it and why — which item/front it connects to, or that it's standalone — so he can redirect you. When the connection is non-obvious (it could merge into A or stand alone), surface the choice rather than silently merging.
 - If they only muse about an idea in passing, ask whether to add it rather than adding silently.
 
 **Log activity & check alignment** — the user narrates what he did or has been doing ("today I did X", "I've been working on Y lately"), not asking for advice, just reporting effort.
