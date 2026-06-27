@@ -1,8 +1,17 @@
 # syntax=docker/dockerfile:1
 FROM node:22-slim
 
+# Optional Debian mirror for faster apt behind slow cross-border links. Defaults
+# to the upstream CDN; set per-deployment (e.g. a domestic mirror) via the
+# APT_MIRROR build arg — wired through docker-compose from .env.
+ARG APT_MIRROR=deb.debian.org
+
 # Install build tools for native modules (better-sqlite3)
-RUN apt-get update && apt-get install -y \
+RUN if [ "$APT_MIRROR" != "deb.debian.org" ]; then \
+      sed -i "s|deb.debian.org|$APT_MIRROR|g" \
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+    fi && \
+    apt-get update && apt-get install -y \
     build-essential \
     curl \
     git \

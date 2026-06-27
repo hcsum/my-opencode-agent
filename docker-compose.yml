@@ -1,6 +1,11 @@
 services:
   agent:
-    build: .
+    build:
+      context: .
+      args:
+        # Per-deployment Debian apt mirror (domestic mirror for slow cross-border
+        # links); defaults to the upstream CDN when APT_MIRROR is unset.
+        APT_MIRROR: ${APT_MIRROR:-deb.debian.org}
     container_name: opencode-agent
     # The bridge spawns the OpenCode server in-process (src/opencode-server.ts),
     # so a single command runs both. bridge.sh execs tsx as PID 1 so Docker's
@@ -23,11 +28,8 @@ services:
       - XDG_CACHE_HOME=/workspace/.cache
       - XDG_STATE_HOME=/workspace/.local/state
       - GMAIL_MCP_DIR=/workspace/.gmail-mcp
-      # Reach Qdrant over the compose network (service DNS), not localhost.
-      - QDRANT_URL=http://qdrant:6333
-      # Per-agent slug for the generated memory audit files. The VPS keeps a
-      # separate Qdrant store from the local agent but shares the notes/ repo,
-      # so each writes its own SNAPSHOT.<id>.md to avoid sync merge conflicts.
+      # Per-agent slug for the generated memory audit files; shared notes/ repo
+      # means each deployment writes its own SNAPSHOT.<id>.md to avoid conflicts.
       - MEM0_AGENT_ID=vps
       - BRIDGE_DISABLE_LOCK=true
       - BROWSERBASE_REGION=ap-southeast-1
@@ -61,20 +63,4 @@ services:
     ports:
       - "4096:4096"
     working_dir: /workspace
-    restart: unless-stopped
-    # Start Qdrant first. We don't gate on a healthcheck: the mem0 client
-    # tolerates Qdrant being briefly unavailable (background add/search errors
-    # are caught), and the Qdrant image ships no curl/bash for a reliable probe.
-    depends_on:
-      - qdrant
-
-  # Vector store for the mem0-backed long-term memory plugin
-  # (.opencode/plugin/mem0-memory.ts). Data persists under .data (gitignored).
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: opencode-qdrant
-    ports:
-      - "6333:6333"
-    volumes:
-      - ./.data/qdrant:/qdrant/storage
     restart: unless-stopped
