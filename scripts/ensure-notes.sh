@@ -113,30 +113,43 @@ if [[ -d "$NOTES_DIR/.git" ]]; then
   exit 0
 fi
 
+# No .git yet. We must bootstrap the notes repo INTO the existing directory.
+# Crucially, $NOTES_DIR is usually a bind mount (docker-compose maps ./notes),
+# and a mount point can never be `mv`d ("Device or resource busy"). So we always
+# clone/init *in place* and, when needed, relocate the directory's *contents*
+# rather than the directory itself.
+
 if [[ "$HAS_GIT" -eq 0 ]]; then
   if [[ -d "$NOTES_DIR" ]]; then
     echo "[notes] git is unavailable; using existing directory at $NOTES_DIR"
     exit 0
   fi
 
-  echo "[notes] git is required to clone notes into $NOTES_DIR" >&2
+  echo "[notes] git is required to set up notes at $NOTES_DIR" >&2
   exit 1
 fi
 
-if [[ -e "$NOTES_DIR" ]]; then
-  if [[ -z "$NOTES_REPO_URL" ]]; then
-    echo "[notes] expected $NOTES_DIR to be a git repo, but it exists without .git" >&2
-    exit 1
-  fi
-
-  BACKUP_DIR="$ROOT_DIR/notes.pre-git-migration.$(date +%Y%m%d-%H%M%S)"
-  echo "[notes] moving existing non-git directory to $BACKUP_DIR"
-  mv "$NOTES_DIR" "$BACKUP_DIR"
-fi
-
+# No remote configured: notes is optional. Initialize a local-only repo in place
+# so the agent has a working notes/ tree (sync stays off) instead of failing and
+# crash-looping the whole bridge.
 if [[ -z "$NOTES_REPO_URL" ]]; then
-  echo "[notes] NOTES_REPO_URL is required to clone notes into $NOTES_DIR" >&2
-  exit 1
+  echo "[notes] NOTES_REPO_URL unset — initializing a local-only notes repo at $NOTES_DIR (sync disabled)"
+  mkdir -p "$NOTES_DIR"
+  git -C "$NOTES_DIR" init -q
+  mark_notes_safe_directory
+  ensure_notes_identity
+  exit 0
+fi
+
+# A remote IS configured but the dir isn't a git repo yet. If it holds unrelated
+# files, move just the CONTENTS aside (the directory itself may be an unmovable
+# bind mount), leaving an empty dir to clone into.
+mkdir -p "$NOTES_DIR"
+if [[ -n "$(ls -A "$NOTES_DIR" 2>/dev/null)" ]]; then
+  BACKUP_DIR="$ROOT_DIR/notes.pre-git-migration.$(date +%Y%m%d-%H%M%S)"
+  echo "[notes] $NOTES_DIR has non-git contents; moving them to $BACKUP_DIR"
+  mkdir -p "$BACKUP_DIR"
+  ( shopt -s dotglob nullglob; mv "$NOTES_DIR"/* "$BACKUP_DIR"/ )
 fi
 
 if [[ -n "$NOTES_REPO_TOKEN" ]]; then

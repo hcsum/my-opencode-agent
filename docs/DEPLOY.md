@@ -64,6 +64,11 @@ Edit `/opt/opencode-agent/.env` (as `deploy`). Required / common keys:
 | `USER_EMAIL` / `AGENT_INBOX_EMAIL` | result recipient / polled inbox |
 | `BROWSERBASE_*`, `CAPSOLVER_API_KEY` | web-access providers (if used) |
 | `OPENCODE_MODEL` | model id (or set in compose `environment`) |
+| `APT_MIRROR` | **optional** build knob: Debian apt mirror used during image build. Defaults to the upstream CDN; set a domestic mirror (e.g. `mirrors.tuna.tsinghua.edu.cn`) when building behind a slow cross-border link. Wired into the build via `docker-compose.yml` `build.args`. |
+
+Long-term memory (mem0) needs an external Qdrant: the compose stack no longer
+bundles one. Leave `QDRANT_URL` unset to run memory-less (the plugin degrades to
+a no-op); point it at a reachable Qdrant to enable memory.
 
 Credential/state dirs are mounted from the project's `./.secrets/...` (sources
 hardcoded in `docker-compose.yml`). The global `~/.config/opencode` is not
@@ -81,6 +86,13 @@ share dir's `auth.json`.
    `deploy` (`install -o deploy -g deploy -m 600 ...`).
 4. To avoid 7-day refresh-token expiry, publish the OAuth app to **In
    production** (not "Testing").
+5. **Verify the account.** After the container starts, confirm the log line
+   `[gmail] connected as <X>` shows the *same* Google account whose alias you
+   set in `AGENT_INBOX_EMAIL` (the poll query is `to:<AGENT_INBOX_EMAIL>`). The
+   consent screen silently defaults to whatever account the browser is signed
+   into — consenting as the wrong account makes the bridge poll an empty mailbox
+   and never receive anything. Re-run the reauth (use "Use another account" /
+   an incognito window) if it mismatches.
 
 **OpenCode model auth:**
 
@@ -132,6 +144,20 @@ docker compose -f /opt/opencode-agent/docker-compose.yml logs --tail 30 agent
 # notes auth wired correctly:
 #   container env has NOTES_REPO_TOKEN, notes remote is https://...
 ```
+
+**First boot is slow — don't mistake it for a hang.** On the very first start
+(especially on ARM / a slow link) opencode downloads its `ripgrep` binary and
+loads plugins; the gap between `[opencode-serve] listening` and
+`[opencode] connected` can be **60–90s**. During that window the server accepts
+the port but doesn't answer requests yet, so an early `curl`/healthcheck returns
+nothing (`HTTP 000`). Wait for `[opencode] connected` before concluding it's stuck.
+
+**Notes is best-effort.** `scripts/ensure-notes.sh` now bootstraps the notes repo
+*in place* (it never `mv`s the bind-mounted `notes/`), and a notes failure no
+longer crash-loops the bridge — so a plain `docker compose up` works without any
+host-side notes pre-clone. With no `NOTES_REPO_URL` it initializes a local-only
+notes repo (sync off); with a bad token it logs the error and continues. A
+healthy deploy still shows the `notes` remote as `https://...` with the token.
 
 ## Golden rules (avoid the known footguns)
 

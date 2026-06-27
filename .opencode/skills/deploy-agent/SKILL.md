@@ -29,8 +29,13 @@ guardrails on top of it.
   up or depend on an SSH deploy key / host alias in some user's home.
 - **Secrets never go in the repo.** They live in the VPS `.env` (gitignored),
   `.secrets/` (gitignored + dockerignored), and GitHub Actions secrets.
-- **A notes-sync failure must not block the code deploy.** The workflow already
-  treats `notes pull` as non-fatal — keep it that way.
+- **A notes-sync failure must not block the deploy — in CI *or* the container.**
+  The GitHub workflow treats `notes pull` as non-fatal, and `scripts/bridge.sh`
+  now does too (`ensure-notes.sh || continue`). `ensure-notes.sh` bootstraps the
+  notes repo **in place** — it never `mv`s the bind-mounted `notes/` (a mount
+  can't be moved → the old "Device or resource busy" crash loop). So a plain
+  `docker compose up` works with no host-side notes pre-clone. Do not reintroduce
+  a `mv`-the-dir migration or a hard `exit 1` when notes is unset/unreachable.
 
 ## Procedure
 
@@ -39,15 +44,24 @@ guardrails on top of it.
    creates `.secrets/{gmail-mcp,opencode-share}`, and scaffolds
    `.env`.
 2. **Secrets:** fill `.env` (`NOTES_REPO_URL`, `NOTES_REPO_TOKEN`, `USER_EMAIL`,
-   provider keys). See `docs/DEPLOY.md` Step 2.
+   provider keys). See `docs/DEPLOY.md` Step 2. Optional knobs: `APT_MIRROR`
+   (domestic Debian mirror for faster image builds behind slow links);
+   `QDRANT_URL` (memory is opt-in — the stack no longer bundles Qdrant, so leave
+   it unset to run memory-less, or point at an external Qdrant to enable it).
 3. **One-time interactive auth** (cannot be scripted): Gmail OAuth and OpenCode
-   model auth, landing files in the matching `.secrets/` dir. See Step 3.
+   model auth, landing files in the matching `.secrets/` dir. See Step 3. For
+   Gmail, **verify `[gmail] connected as <X>` matches the account behind
+   `AGENT_INBOX_EMAIL`** — the consent screen defaults to the browser's signed-in
+   account, and the wrong one silently polls an empty mailbox.
 4. **CI:** set the `DEPLOY_*` GitHub Actions secrets (Step 4).
 5. **Deploy:** push to `main`, or manually as `deploy` (Step 5).
 6. **Verify** (Step 6): confirm the log sequence — opencode listening →
    `[opencode] connected` → `[scheduler] recovered N task(s)` →
    `[gmail] connected as <inbox>` (if Gmail enabled) — and that the container
-   has `NOTES_REPO_TOKEN` with an `https://` notes remote.
+   has `NOTES_REPO_TOKEN` with an `https://` notes remote. **First boot is slow:**
+   opencode downloads ripgrep + loads plugins, so `[opencode] connected` can lag
+   `listening` by 60–90s (worse on ARM); an early healthcheck seeing `HTTP 000`
+   is that warm-up, not a hang.
 
 ## Common operations
 
@@ -59,9 +73,20 @@ guardrails on top of it.
 
 ## Troubleshooting
 
-Match symptoms to the table in `docs/DEPLOY.md` ("Troubleshooting"). The most
-common: `[gmail] skipping — missing credentials` almost always means compose was
-run as root (wrong mount) — recreate as `deploy`.
+Match symptoms to the table in `docs/DEPLOY.md` ("Troubleshooting"). Common ones:
+
+- `[gmail] skipping — missing credentials` — compose run as root (wrong mount);
+  recreate as `deploy`, confirm files in `.secrets/gmail-mcp/`.
+- **Container crash-loops on `[notes] ... Device or resource busy`** — an old
+  `ensure-notes.sh` trying to `mv` the bind-mounted `notes/`. Fixed by the
+  in-place bootstrap; if you see it, the container is on stale code — rebuild.
+- **`/session` hangs / healthcheck `HTTP 000` right after start** — first-boot
+  warm-up (ripgrep download + plugin load), not a hang. Wait for
+  `[opencode] connected` (up to ~90s on ARM) before debugging.
+- **Gmail bridge receives nothing** — check `[gmail] connected as <X>` matches
+  the `AGENT_INBOX_EMAIL` account; re-auth with the correct Google account if not.
+- **Slow image build behind a cross-border link** — set `APT_MIRROR` in `.env`
+  to a domestic Debian mirror and rebuild.
 
 ## References
 

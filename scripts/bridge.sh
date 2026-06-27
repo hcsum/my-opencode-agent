@@ -10,7 +10,11 @@ if [[ -f .env && -z "${OPENCODE_BASE_URL:-}" ]]; then
   set +a
 fi
 
-bash "$ROOT_DIR/scripts/ensure-notes.sh"
+# Notes sync is best-effort: a notes bootstrap/clone failure (bad token, network,
+# private repo unreachable) must never crash-loop the whole bridge. The agent
+# runs fine without notes; it just loses the synced notes/ tree until fixed.
+bash "$ROOT_DIR/scripts/ensure-notes.sh" || \
+  echo "[notes] bootstrap failed; continuing without notes sync (see errors above)" >&2
 
 # Run tsx directly (no npx layer) so SIGTERM from the supervisor reaches tsx,
 # which forwards it to the Node process running the bridge — letting it drain
