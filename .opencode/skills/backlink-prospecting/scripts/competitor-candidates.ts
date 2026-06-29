@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 // Build a deduped backlink-candidate list from a competitor's Semrush backlinks
-// export. For each referring domain NOT already in notes/seo/backlink-master.csv,
+// export. For each referring domain NOT already in notes/projects/backlink-master.csv,
 // emit one row with the domain's authority score and a representative live link
 // (Source url + follow status) as a worked example of how that domain hosts
 // an outbound link. `doable` is left blank for the agent to triage.
@@ -12,14 +12,14 @@ import path from "node:path";
 //   npx tsx competitor-candidates.ts <competitor-substring>
 //   e.g. npx tsx competitor-candidates.ts polybuzz
 // Finds the newest "<sub>*-backlinks.csv" and "<sub>*refdomains.csv" in
-// ~/Downloads (falls back to notes/seo/site-backlinks). Writes
+// ~/Downloads (falls back to notes/projects/site-backlinks). Writes
 // notes/seo/backlink-candidates-<competitor>.csv, preserving any `doable`
 // values already filled in a prior run.
 
 const DOWNLOADS = path.join(os.homedir(), "Downloads");
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../..");
-const MASTER = path.join(REPO, "notes/seo/backlink-master.csv");
-const SITE_BACKLINKS = path.join(REPO, "notes/seo/site-backlinks");
+const MASTER = path.join(REPO, "notes/projects/backlink-master.csv");
+const SITE_BACKLINKS = path.join(REPO, "notes/projects/site-backlinks");
 
 function fail(msg: string): never {
   console.error(msg);
@@ -203,7 +203,7 @@ function main() {
   for (const d of reps.keys()) if (!masterSet.has(d)) candidates.add(d);
   const refOnlyNew = refOrder.filter((d) => !masterSet.has(d) && !reps.has(d)).length;
 
-  const outFile = path.join(REPO, "notes/seo", `backlink-candidates-${competitor}.csv`);
+  const outFile = path.join(REPO, "notes/projects", `backlink-candidates-${competitor}.csv`);
   const priorDoable = new Map<string, string>();
   if (fs.existsSync(outFile)) {
     const prior = readCsv(outFile);

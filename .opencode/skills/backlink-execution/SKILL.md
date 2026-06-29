@@ -5,11 +5,21 @@ description: Execute live backlink placements from an existing target CSV. Use w
 
 Build real backlink placements from an existing target list. This skill owns execution, not prospecting.
 
+## What This Skill Does
+
+Your effort goes to exactly three things. Everything else is a hand-off.
+
+1. **Figure out how to get the backlink** — determine the site's real link surface (article body, comment author URL, profile, listing, signature) before touching any flow.
+2. **Fill the forms** — fill the straightforward fields of submission/listing/post forms and prepare the content.
+3. **Record and update the backlink list** — after every target, write the result back to the tracking CSV: the live URL on success, the reusable site know-how that makes the *next* project's placement on this same site faster, and, when a target is not doable, the concrete reason why. See [CSV Discipline](#csv-discipline).
+
+**Hand off to the user, do not spend tokens on it:** login, registration, account creation, OAuth / "sign in with Google", email/SMS verification, password-reset, captcha, and any other auth or anti-bot gate. Do not fight controlled-input forms, password-strength rules, or login walls yourself — the moment a step needs an account or human verification, stop and ask the user to do that one step, then continue. Logging in is cheap for the user and expensive for you.
+
 ## Goal
 
 - Turn each target into either a live placement or a clearly logged blocker.
 - Keep the tracking CSV accurate after every target, not in a batch at the end.
-- Avoid wasting time on dead sites, broken flows, mailbox gates, captchas, and high-friction form fields.
+- Avoid wasting time on dead sites, broken flows, mailbox gates, captchas, login walls, and high-friction form fields.
 
 ## Before You Start
 
@@ -32,43 +42,53 @@ Build real backlink placements from an existing target list. This skill owns exe
 
 ## Stop And Hand Off
 
+- If a target needs login, registration, account creation, or "sign in with Google"/OAuth, stop and ask the user to log in before you go further. Do not attempt to register or authenticate yourself, and do not burn turns fighting password rules or controlled login forms.
 - If progress depends on checking email for signup, activation, verification, or password reset, stop and ask the user to do that step. Do not attempt mailbox handling yourself.
 - If you see captcha or other anti-bot measures, stop and hand that step to the user instead of repeatedly trying to brute-force it.
 - If the UI is hard to navigate, stop and inform the user instead of burning time on trial-and-error clicking.
 - If a form requires payment, phone or SMS verification, subjective business details you cannot verify, or another high-friction final step, fill what is obvious and hand the rest to the user.
 - When handing a step to the user, be precise about what page you reached, what you already filled, and the exact next action they need to take.
 
-## Inaccessible Targets
+## Status: Two Separate Axes
 
-- If the site is inaccessible, the submission path is dead, or the flow is clearly broken, mark it in the tracking CSV immediately and move on to the next target.
-- Use **four statuses** — pick the tightest fit:
-  - `done` — live placement confirmed, with the target URL present as a real clickable link rather than plain text
-  - `parked` — blocked on a temporary/manual step (email verify, user completes form, awaiting moderation result); will unblock
-  - `hard` — submission path exists but requires user interaction to complete (captcha hand-off, hidden form needs click trigger, Blogger popup, reCAPTCHA v2); doable next run with user present
-  - `no` — permanently not actionable: dead site, login-only, paid wall, auto-generated page, web2.0 blog cluster, truly no submission surface
-- Always record the reason in `note` so the next run does not rediscover the same blocker from scratch.
+Status lives in **two different columns**. Never collapse them — in particular, never write `done` / `reviewing` / `parked` into `doable`.
 
-## Known Platform Families
+**`doable` — site-level, project-agnostic.** Whether the site can produce a backlink at all. This is a durable property of the *site*: it is identical for every project and does **not** change when one project gets its link. Pick the tightest fit:
+  - `yes` — site has a usable link surface, placeable with low/moderate effort
+  - `hard` — a link surface exists but every placement needs live user interaction (captcha on submit, hidden form needs a click trigger, Blogger-style popup, reCAPTCHA v2); doable next run with the user present
+  - `no` — permanently not actionable: dead site, paid wall, auto-generated page, web2.0 blog cluster, or genuinely no link surface even after login. A plain login wall is **not** `no` — that is a per-project `parked` hand-off on a `yes`/`hard` site.
 
-Before attempting a site, check if it belongs to a known family — saves the entire "how do links come out of this site?" preflight.
+**Per-project column — the outcome for one project on this site.** Each project has its own column; a site can be live for one project and untouched for another. Write that project's status here as `<status>, <detail>` (quote the cell since it contains a comma):
+  - a bare live `<url>` — **done, with link**: the target URL renders as a real clickable `<a href>`, not plain text. The normal success case.
+  - `done, no link` — the placement went through but the site yields no usable clickable backlink (link stripped, or the surface is plain-text/no-href). Nothing more to attempt for this project.
+  - `reviewing, <url>` — **submitted, awaiting moderation/approval**. Include the submission or profile URL when there is one; otherwise just `reviewing`.
+  - `parked, <reason>` — blocked on a manual step the user can clear, e.g. `parked, needs login`, `parked, check email to verify`, `parked, user must complete <field>`. Will unblock once the user acts.
 
-**Web2.0 free blog family**:
-- These platforms often share similar registration, editor, and publish flows, so reuse already-validated patterns when the site clearly belongs to a known family.
-- Confirm the final article-body link is actually rendered and clickable before counting it.
-
-**AI tool directories**:
-- Many directory sites gate submission behind payment, review queues, or shallow auto-generated pages.
-- Do not count an auto-generated page or locked payment step as a finished placement.
+If the site is inaccessible, the submission path is dead, or the flow is clearly broken, set `doable=no` immediately and move on. Always record the concrete blocker reason in `note` so the next run does not rediscover it from scratch.
 
 ## CSV Discipline
 
-- Update the tracking CSV after each target attempt.
-- For `notes/projects/backlink-master.csv`, write the live placement URL into the relevant project column when successful.
-- Record useful execution detail in `note`: account name, whether the link is dofollow or nofollow, moderation status, expiry risk, and any required follow-up.
-- Never postpone CSV updates until the end of the run.
+Update the tracking CSV after **each** target attempt — never batch it to the end of the run. One target = one write-back. The `note` column is the durable memory of the run: it is what makes the *next* attempt (a new project on the same site, or a re-visit of a blocker) cheap instead of a rediscovery.
+
+For `notes/projects/backlink-master.csv`, the per-project status goes in that project's own column (`done` with the live URL / `done, no link` / `reviewing, <url>` / `parked, <reason>` — see [Status: Two Separate Axes](#status-two-separate-axes)). The `doable` column stays site-level (`yes` / `hard` / `no`) and is never overwritten with a project's outcome. A site can be live for one project and still open for another.
+
+What to put in `note`, every time:
+
+**The link path (so it is never re-derived).** Which surface produced the link — listing, profile, comment author URL, article body, signature — and the exact submit route or page to reach it. This is the single most reusable fact: a new project on the same site can skip the entire "how do links come out of this site?" preflight.
+
+**Reusable site-specific experience.** Anything that made this site awkward and will recur for the next project:
+- account used (which login/email) and whether the account can be reused across projects;
+- the resolved value of any high-friction field (required category, market, business-type, captcha behavior, the exact password rule that was rejected);
+- form quirks and traps — controlled inputs that fight value-setting, steps that only save on an explicit "Next"/"Save", a wizard that drops uploads on back-navigation, a field that silently clobbers another;
+- link quality: dofollow vs nofollow (and the observed `rel`), and whether the link is on a lower-authority subdomain;
+- moderation/expiry: review queue and typical approval time, or a hard auto-delete deadline (convert to an absolute date).
+
+**Why it is not doable (when it is not).** For a site-level `no` / `hard`, or a project-level `parked`, state the concrete blocker so the next run does not rediscover it from scratch: e.g. "registration requires SMS", "submission is paid ($X)", "page is auto-generated, no real link", "captcha on submit — needs user", "login wall — user must sign in first". Pair the reason with the right value from [Status: Two Separate Axes](#status-two-separate-axes).
+
+Write `note` as terse, factual prose a future run can act on directly — not a narrative of what you tried. When a site's know-how is rich enough to be worth a fuller writeup, also capture it as a `web-access` site-pattern (`references/site-patterns/{domain}.md`) and point to it from the `note`.
 
 ## Output
 
-- Report each target as `done`, `parked`, `hard`, or `no`.
+- Report each target on both axes: the site `doable` (`yes` / `hard` / `no`) and the per-project outcome (`done` with URL / `done, no link` / `reviewing` / `parked` with reason).
 - Include the live placement URL when available.
 - Include any user hand-off step that is still blocking progress.

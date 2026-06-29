@@ -22,10 +22,10 @@ npx tsx .opencode/skills/backlink-prospecting/scripts/competitor-candidates.ts <
 
 What it does:
 
-- reads the newest `<sub>*-backlinks.csv` plus matching `*refdomains*.csv` from `~/Downloads` and falls back to `notes/seo/site-backlinks/`
-- drops every referring domain already present in `notes/seo/backlink-master.csv` using registrable-domain dedup
+- reads the newest `<sub>*-backlinks.csv` plus matching `*refdomains*.csv` from `~/Downloads` and falls back to `notes`
+- drops every referring domain already present in `notes/projects/backlink-master.csv` using registrable-domain dedup
 - picks one representative live link per new domain, preferring dofollow and then higher page authority
-- writes `notes/seo/backlink-candidates-<competitor>.csv` sorted by `AS` descending
+- writes `notes/projects/backlink-candidates-<competitor>.csv` sorted by `AS` descending
 - preserves any existing `doable` values if the candidates file already exists
 
 Output columns:
@@ -34,9 +34,11 @@ Output columns:
 
 ## Triage Rules
 
+- `doable` is **site-level only**: whether the site can realistically produce a backlink. Allowed values: `yes` (placeable with low/moderate effort), `hard` (link surface exists but every placement needs live user interaction — captcha, click trigger), `no` (not actionable). It never holds a per-project outcome like `done` / `reviewing` / `parked` — those live in the per-project columns and are owned by `backlink-execution`.
 - The only selection criterion is whether the placement looks doable with little effort.
 - Do not mark `no` just because the link is low quality, nofollow, or off-topic.
 - Very high-AS rows are often search engines, app stores, or aggregators that are not realistically reproducible.
+- Mark `no` for auto-generated scraper/stat pages and PBN/SEO-spam — these fail the doability test (nothing to submit), not the quality test. Tells: the example URL is a programmatic report/listing keyed off the competitor (`/report/<id>`, `/stats/<id>`, `/share/<id>`, `/domain/.../part/<id>`, repeated opaque hash slugs like `page-<hash>` or `<hash>-l/` recurring across many domains); spammy SEO/PBN domains (`fiverr-*`, `*-seo-*.shop`, `*links.agency`, "buy backlinks" copy); junk TLDs used at scale (`.top`, `.sbs`, `.cfd`, `.icu`, `.shop`, `pages.dev` stat mirrors). A competitor export dominated by these means few real targets — that is expected, don't force keepers.
 - If Semrush exported a referring domain without any usable per-link example, skip it for now; the script already excludes those rows.
 
 ## Handoff To Execution
