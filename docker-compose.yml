@@ -6,6 +6,8 @@ services:
         # Per-deployment Debian apt mirror (domestic mirror for slow cross-border
         # links); defaults to the upstream CDN when APT_MIRROR is unset.
         APT_MIRROR: ${APT_MIRROR:-deb.debian.org}
+        # Optional npm registry mirror for faster npm install / npm ci during image builds.
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
     container_name: opencode-agent
     # The bridge spawns the OpenCode server in-process (src/opencode-server.ts),
     # so a single command runs both. bridge.sh execs tsx as PID 1 so Docker's

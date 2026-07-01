@@ -65,6 +65,7 @@ Edit `/opt/opencode-agent/.env` (as `deploy`). Required / common keys:
 | `BROWSERBASE_*`, `CAPSOLVER_API_KEY` | web-access providers (if used) |
 | `OPENCODE_MODEL` | model id (or set in compose `environment`) |
 | `APT_MIRROR` | **optional** build knob: Debian apt mirror used during image build. Defaults to the upstream CDN; set a domestic mirror (e.g. `mirrors.tuna.tsinghua.edu.cn`) when building behind a slow cross-border link. Wired into the build via `docker-compose.yml` `build.args`. |
+| `NPM_REGISTRY` | **optional** build knob: npm registry used during image build. Leave unset for the default npm registry; set a mirror (e.g. `https://registry.npmmirror.com/`) if `npm install` / `npm ci` is the slow part. |
 
 Long-term memory (mem0) needs an external Qdrant: the compose stack no longer
 bundles one. Leave `QDRANT_URL` unset to run memory-less (the plugin degrades to

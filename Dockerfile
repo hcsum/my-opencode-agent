@@ -5,6 +5,9 @@ FROM node:22-slim
 # to the upstream CDN; set per-deployment (e.g. a domestic mirror) via the
 # APT_MIRROR build arg — wired through docker-compose from .env.
 ARG APT_MIRROR=deb.debian.org
+# Optional npm registry mirror for faster package installs during image builds.
+# Keep the default npm registry unless a deployment overrides it in .env.
+ARG NPM_REGISTRY=https://registry.npmjs.org/
 
 # Install build tools for native modules (better-sqlite3)
 RUN if [ "$APT_MIRROR" != "deb.debian.org" ]; then \
@@ -21,6 +24,7 @@ RUN if [ "$APT_MIRROR" != "deb.debian.org" ]; then \
 WORKDIR /workspace
 
 ENV NODE_OPTIONS=--max-old-space-size=1536
+ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
 
 # Runtime state lives under /workspace (see docker-compose XDG_*/GMAIL_MCP_DIR),
 # not /root; opencode creates its XDG dirs on demand and the bind mounts create
