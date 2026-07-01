@@ -12,5 +12,5 @@
     }
   },
   "instructions": ["notes/user.md"],
-  "plugin": ["./plugin/scheduler.ts", "./plugin/mem0-memory.ts"]
+  "plugin": ["./plugin/scheduler.ts"]
 }
