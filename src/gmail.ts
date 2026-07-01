@@ -278,6 +278,12 @@ export class GmailBridge {
 
       const fromHeader =
         headers.find((h) => h.name?.toLowerCase() === "from")?.value || "";
+      const toHeader =
+        headers.find((h) => h.name?.toLowerCase() === "to")?.value || "";
+      const deliveredToHeader =
+        headers.find((h) => h.name?.toLowerCase() === "delivered-to")?.value || "";
+      const originalToHeader =
+        headers.find((h) => h.name?.toLowerCase() === "x-original-to")?.value || "";
       subject =
         headers.find((h) => h.name?.toLowerCase() === "subject")?.value ||
         "(no subject)";
@@ -289,12 +295,30 @@ export class GmailBridge {
       senderEmail = email;
       const body = this.extractTextBody(message.payload) || "";
       const internalDateMs = parseMessageInternalDate(message.internalDate);
+      const inboxAddress = this.getAgentInboxAddress();
 
       if (isOlderThanWindow(internalDateMs, this.config.gmailNewerThan)) {
         console.log(
           `[gmail] skipping stale message ${messageId}; internalDate=${message.internalDate || "(missing)"} older than ${this.config.gmailNewerThan}`,
         );
         await this.markRead(messageId);
+        markProcessed(messageId, threadId, subject, senderEmail);
+        return;
+      }
+
+      // Gmail thread search can surface the bridge's own sent replies when the
+      // authenticated account is also the human user's mailbox. Only continue
+      // if the fetched message was actually addressed to the agent inbox.
+      if (
+        inboxAddress &&
+        !messageTargetsInbox(
+          [toHeader, deliveredToHeader, originalToHeader],
+          inboxAddress,
+        )
+      ) {
+        console.log(
+          `[gmail] skipping non-inbox message ${messageId}; to=${toHeader || "(missing)"}`,
+        );
         markProcessed(messageId, threadId, subject, senderEmail);
         return;
       }
@@ -983,13 +1007,21 @@ export class GmailBridge {
   private async markRead(messageId: string): Promise<void> {
     if (!this.gmail) return;
 
-    await this.gmail.users.messages.modify({
-      userId: "me",
-      id: messageId,
-      requestBody: {
-        removeLabelIds: ["UNREAD"],
-      },
-    });
+    try {
+      await this.gmail.users.messages.modify({
+        userId: "me",
+        id: messageId,
+        requestBody: {
+          removeLabelIds: ["UNREAD"],
+        },
+      });
+    } catch (error) {
+      if (isGmailMessageNotFound(error)) {
+        console.warn(`[gmail] markRead skipped missing message ${messageId}`);
+        return;
+      }
+      throw error;
+    }
   }
 
   private setupProxy(): void {
@@ -1272,6 +1304,11 @@ function parseFromHeader(from: string): { name: string; email: string } {
   return { name: from, email: from };
 }
 
+function messageTargetsInbox(headers: string[], inboxAddress: string): boolean {
+  const normalizedInbox = inboxAddress.trim().toLowerCase();
+  return headers.some((value) => value.toLowerCase().includes(normalizedInbox));
+}
+
 function stripQuotedReply(body: string): string {
   const normalized = body.replace(/\r\n/g, "\n");
   const lines = normalized.split("\n");
@@ -1302,6 +1339,20 @@ function stripQuotedReply(body: string): string {
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function isGmailMessageNotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const maybeStatus = (error as { status?: unknown }).status;
+  if (maybeStatus === 404) return true;
+
+  const response = (error as { response?: { status?: unknown; data?: unknown } }).response;
+  if (response?.status === 404) return true;
+
+  const data = response?.data;
+  if (!data || typeof data !== "object") return false;
+  return (data as { error?: { status?: unknown } }).error?.status === "NOT_FOUND";
 }
 
 function isReplyHeader(line: string): boolean {
